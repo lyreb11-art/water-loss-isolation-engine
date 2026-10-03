@@ -1,0 +1,104 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    background: #0E1419;
+    color: #E8EEF5;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  * { box-sizing: border-box; }
+
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: #131A22; }
+  ::-webkit-scrollbar-thumb { background: #2A3742; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #38475A; }
+}
+
+@layer components {
+  .card {
+    @apply bg-panel border border-border rounded-xl shadow-card;
+  }
+  .kpi-card {
+    @apply bg-panel border border-border rounded-xl p-4 shadow-card;
+  }
+  .kpi-label {
+    @apply text-[11px] text-muted uppercase tracking-wider mb-1;
+  }
+  .kpi-value {
+    @apply text-2xl font-bold text-text font-mono leading-none;
+  }
+  .pill {
+    @apply px-3 py-1 rounded-full text-xs font-semibold inline-flex items-center;
+  }
+  .pill-stable   { @apply bg-success/10 text-success border border-success/30; }
+  .pill-leak     { @apply bg-warning/10 text-warning border border-warning/30; }
+  .pill-theft    { @apply bg-danger/10 text-danger border border-danger/40; }
+  .pill-burst    { @apply bg-danger/15 text-danger border border-danger/50; }
+  .pill-maintenance { @apply bg-teal/10 text-teal border border-teal/30; }
+
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-colors duration-150;
+  }
+  .btn-primary {
+    @apply bg-primary text-base hover:bg-primary2 font-semibold;
+  }
+  .btn-ghost {
+    @apply bg-panel2 text-text hover:bg-border2 border border-border;
+  }
+  .btn-danger {
+    @apply bg-danger/20 text-danger border border-danger/40 hover:bg-danger/30;
+  }
+
+  .input {
+    @apply w-full bg-base border border-border rounded-lg px-3 py-2 text-text
+           placeholder:text-dim focus:outline-none focus:border-primary/60
+           focus:ring-1 focus:ring-primary/30 transition-colors;
+  }
+
+  .hero-title {
+    @apply text-2xl font-bold text-text tracking-tight;
+  }
+  .hero-sub {
+    @apply text-xs text-muted uppercase tracking-widest;
+  }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6FCF97;
+  margin-right: 6px;
+  box-shadow: 0 0 8px #6FCF97;
+  animation: pulse-dot 1.4s infinite;
+}
+
+/* MapLibre overrides to blend with the theme */
+.maplibregl-ctrl-attrib {
+  background: rgba(14,20,25,0.7) !important;
+  color: #6B7887 !important;
+  font-size: 10px !important;
+}
+.maplibregl-ctrl-attrib a { color: #9AA7B6 !important; }
+.maplibregl-popup-content {
+  background: #1B242E !important;
+  color: #E8EEF5 !important;
+  border: 1px solid #2A3742 !important;
+  border-radius: 8px !important;
+  padding: 10px 12px !important;
+  font-size: 12px !important;
+}
+.maplibregl-popup-tip { border-top-color: #1B242E !important; }
