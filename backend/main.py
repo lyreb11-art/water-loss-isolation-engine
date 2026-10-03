@@ -1,7 +1,7 @@
 """
 main.py -- FastAPI backend for the Water Loss Isolation Engine.
 
-The simulation is now SERVER-OWNED:
+The simulation is SERVER-OWNED:
   - A background asyncio task advances the graph every TICK_INTERVAL_SECONDS
   - /api/simulate/step is now read-only (returns current state)
   - /api/simulate/tick forces a manual advance (used by Demo Controls)
@@ -15,6 +15,7 @@ Run:
 """
 
 import asyncio
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 from threading import Lock as ThreadLock
@@ -80,16 +81,21 @@ def _advance_simulation():
 
 
 async def _sim_loop():
+    """Advance the graph every TICK_INTERVAL_SECONDS, forever.
+
+    Note: the pause check must be inside the lock, otherwise a pause()
+    arriving between the check and the lock acquisition lets one extra
+    automatic tick slip through after the user hit pause.
+    """
     while True:
         try:
             await asyncio.sleep(TICK_INTERVAL_SECONDS)
             if GRAPH_STATE["G"] is None:
                 continue
-            if not GRAPH_STATE["_sim_running"]:
-                continue
             async with _graph_lock:
-                if GRAPH_STATE["_sim_running"]:
-                    _advance_simulation()
+                if not GRAPH_STATE["_sim_running"]:
+                    continue
+                _advance_simulation()
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -120,10 +126,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173", "http://127.0.0.1:5173",
-        "http://localhost:3000", "http://127.0.0.1:3000",
-    ],
+    # Dev convenience: accept any localhost port. Vite auto-selects the
+    # next free port if 5173 is busy, so a hardcoded list breaks silently.
+    # Replace with an explicit allowlist before deploying anywhere public.
+    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -178,6 +184,13 @@ def _current_state():
     }
 
 
+def _street_sort_key(s: str):
+    """Natural sort: 1st Road < 2nd Road < 10th Road.
+    Tuples at every position to avoid comparing int with str."""
+    parts = re.split(r'(\d+)', s)
+    return [(0, int(p)) if p.isdigit() else (1, p.lower()) for p in parts if p]
+
+
 @app.get("/")
 def root():
     return {"status": "ok", "service": "Water Loss Isolation Engine API", "version": "2.0.0"}
@@ -219,7 +232,7 @@ async def load_region(req: LoadRegionRequest):
 
 @app.post("/api/simulate/step")
 async def api_step():
-    """READ-ONLY. Returns the current simulation state. Does not advance."""
+    """READ-ONLY. Returns current state. Does not advance."""
     await asyncio.to_thread(_ensure_graph)
     async with _graph_lock:
         return _current_state()
@@ -250,11 +263,12 @@ async def api_resume():
 
 @app.get("/api/simulate/status")
 async def api_sim_status():
-    return {
-        "sim_running": GRAPH_STATE["_sim_running"],
-        "tick_interval": TICK_INTERVAL_SECONDS,
-        "tick_count": GRAPH_STATE["tick_count"],
-    }
+    async with _graph_lock:
+        return {
+            "sim_running": GRAPH_STATE["_sim_running"],
+            "tick_interval": TICK_INTERVAL_SECONDS,
+            "tick_count": GRAPH_STATE["tick_count"],
+        }
 
 
 @app.get("/api/simulate/residuals")
@@ -381,6 +395,22 @@ async def api_zones():
             "status": zone_status(G, n),
         } for n in leaves]
         return {"zones": zones}
+
+
+@app.get("/api/streets")
+async def api_streets(limit: int = 200):
+    """Sorted unique street names -- used by citizen locality dropdowns
+    to avoid shipping the full graph for ~30 strings."""
+    await asyncio.to_thread(_ensure_graph)
+    async with _graph_lock:
+        G = GRAPH_STATE["G"]
+        streets = {
+            d.get("street")
+            for _, d in G.nodes(data=True)
+            if d.get("street") and not d["street"].startswith("Junction")
+        }
+        sorted_streets = sorted(streets, key=_street_sort_key)
+        return {"streets": sorted_streets[:limit]}
 
 
 class ComplaintRequest(BaseModel):

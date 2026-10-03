@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../AuthContext'
-import { addComplaint, fetchGraph } from '../api'
+import { addComplaint, fetchStreets } from '../api'
 import AppLayout from '../components/AppLayout'
-import { naturalSortStreets } from '../utils/sort'
 
 const CATEGORIES = ['Leak', 'No water', 'Low pressure', 'Contaminated water', 'Other']
 
@@ -15,19 +14,21 @@ export default function CitizenReport() {
   const [message, setMessage] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState('')
+  const [loadingStreets, setLoadingStreets] = useState(true)
 
   useEffect(() => {
     let alive = true
-    fetchGraph().then((g) => {
-      if (!alive) return
-      const set = new Set()
-      g.graph.nodes.forEach((n) => {
-        if (n.street && !n.street.startsWith('Junction')) set.add(n.street)
+    fetchStreets()
+      .then((streets) => {
+        if (!alive) return
+        const list = streets.slice(0, 60)
+        setLocalities(list)
+        if (!locality && list.length > 0) setLocality(zone || list[0])
       })
-      const sorted = naturalSortStreets([...set]).slice(0, 40)
-      setLocalities(sorted)
-      if (!locality && sorted.length > 0) setLocality(zone || sorted[0])
-    })
+      .catch(() => { /* the select will render a fallback */ })
+      .finally(() => {
+        if (alive) setLoadingStreets(false)
+      })
     return () => { alive = false }
   }, [])   // eslint-disable-line
 
@@ -60,8 +61,11 @@ export default function CitizenReport() {
 
         {toast && (
           <div
-            className={`card p-3 mb-4 text-sm ${toast.startsWith('✅') ? 'border-success/40 bg-success/5 text-success' : 'border-danger/40 bg-danger/5 text-danger'
-              }`}
+            className={`card p-3 mb-4 text-sm ${
+              toast.startsWith('✅')
+                ? 'border-success/40 bg-success/5 text-success'
+                : 'border-danger/40 bg-danger/5 text-danger'
+            }`}
           >
             {toast}
           </div>
@@ -74,8 +78,13 @@ export default function CitizenReport() {
               className="input"
               value={locality}
               onChange={(e) => setLocality(e.target.value)}
+              disabled={loadingStreets}
             >
-              {localities.map((l) => (
+              {loadingStreets && <option>Loading localities…</option>}
+              {!loadingStreets && localities.length === 0 && (
+                <option>No localities available</option>
+              )}
+              {!loadingStreets && localities.map((l) => (
                 <option key={l} value={l}>{l}</option>
               ))}
             </select>
@@ -98,10 +107,11 @@ export default function CitizenReport() {
                   key={c}
                   type="button"
                   onClick={() => setCategory(c)}
-                  className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${category === c
-                    ? 'bg-primary/15 text-primary border-primary/40'
-                    : 'bg-panel text-muted border-border hover:text-text'
-                    }`}
+                  className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${
+                    category === c
+                      ? 'bg-primary/15 text-primary border-primary/40'
+                      : 'bg-panel text-muted border-border hover:text-text'
+                  }`}
                 >
                   {c}
                 </button>

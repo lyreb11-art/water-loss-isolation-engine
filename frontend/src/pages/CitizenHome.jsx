@@ -372,6 +372,9 @@ function CitizenDashboard() {
                         <span className={`pill ${pill}`}>{a.classification}</span>
                         <span className="text-xs text-muted">{Math.round(a.confidence * 100)}%</span>
                       </div>
+                      <div className="mt-1 text-[11px] text-muted">
+                        Δ {a.diff_pct.toFixed(1)}% · onset {a.onset} · duration {a.duration_steps}
+                      </div>
                     </div>
                   )
                 })}

@@ -76,10 +76,15 @@ export async function fetchResiduals() {
   return data
 }
 
-// ---- zones ----
+// ---- zones / streets ----
 export async function fetchZones() {
   const { data } = await client.get('/api/zones')
   return data
+}
+
+export async function fetchStreets() {
+  const { data } = await client.get('/api/streets')
+  return data.streets || []
 }
 
 // ---- complaints ----
