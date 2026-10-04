@@ -1,6 +1,7 @@
 """
 graph_twin.py -- Synthetic flow simulation + anomaly injection + classification.
 """
+
 import random
 import networkx as nx
 
@@ -38,6 +39,7 @@ def build_network() -> nx.DiGraph:
             status="Normal", classification="Normal",
             confidence=1.0, duration_steps=0, isolated=False,
             road_class="distribution", length_m=200.0, street=v,
+            _history=[],
             geometry=[(G.nodes[u]["lon"], G.nodes[u]["lat"]),
                       (G.nodes[v]["lon"], G.nodes[v]["lat"])],
         )
@@ -57,6 +59,7 @@ def inject_anomaly(G: nx.DiGraph, edge: tuple, event_type: str, severity: float 
         data["confidence"] = 1.0
         data["duration_steps"] = 0
         data["isolated"] = False
+        data["_history"] = []
         return
 
     if severity is None:
@@ -76,6 +79,12 @@ def classify_step(G: nx.DiGraph):
     for u, v, data in G.edges(data=True):
         diff_pct = diff_pct_from_flows(data["flow_in"], data["flow_out"])
 
+        # ---- maintain a rolling residual history per edge ----
+        hist = data.get("_history") or []
+        hist.append(diff_pct)
+        hist = hist[-10:]
+        data["_history"] = hist
+
         if diff_pct < 8:
             data["duration_steps"] = 0
         else:
@@ -91,11 +100,19 @@ def classify_step(G: nx.DiGraph):
         if result.label in ("Theft", "Burst") and result.confidence > 0.7:
             data["isolated"] = True
 
+        # ---- rolling-window features for the ML layer ----
+        diff_pct_lag1 = hist[-2] if len(hist) >= 2 else diff_pct
+        diff_pct_lag3 = hist[-4] if len(hist) >= 4 else diff_pct_lag1
+        slope = (diff_pct - diff_pct_lag3) / 3.0
+
         results.append({
             "edge": f"{u} → {v}",
             "edge_id": f"{u}__{v}",
             "zone": str(v),
             "diff_pct": round(diff_pct, 1),
+            "diff_pct_lag1": round(diff_pct_lag1, 1),
+            "diff_pct_lag3": round(diff_pct_lag3, 1),
+            "slope": round(slope, 2),
             "classification": result.label,
             "confidence": result.confidence,
             "isolated": data["isolated"],

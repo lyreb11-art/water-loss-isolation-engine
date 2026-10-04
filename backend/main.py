@@ -1,21 +1,14 @@
 """
 main.py -- FastAPI backend for the Water Loss Isolation Engine.
 
-The simulation is SERVER-OWNED:
-  - A background asyncio task advances the graph every TICK_INTERVAL_SECONDS
-  - /api/simulate/step is now read-only (returns current state)
-  - /api/simulate/tick forces a manual advance (used by Demo Controls)
-  - /api/simulate/pause + /api/simulate/resume control the clock
-  - All graph access is serialized by an asyncio.Lock
-
-Run:
-    cd backend
-    venv\\Scripts\\activate
-    uvicorn main:app --reload --port 8000
+Server-owned simulation loop, read-only /api/simulate/step, ML classification
+endpoint. Run: uvicorn main:app --reload --port 8000
 """
 
 import asyncio
+import os
 import re
+import joblib
 from contextlib import asynccontextmanager
 from datetime import datetime
 from threading import Lock as ThreadLock
@@ -46,6 +39,24 @@ _graph_lock = asyncio.Lock()
 _load_lock = ThreadLock()
 
 
+# ---------------------------------------------------------------------
+# ML model
+# ---------------------------------------------------------------------
+_ML_PATH = os.path.join(os.path.dirname(__file__), "ml", "model.joblib")
+_ML_BUNDLE = None
+
+
+def _get_ml_model():
+    global _ML_BUNDLE
+    if _ML_BUNDLE is None and os.path.exists(_ML_PATH):
+        _ML_BUNDLE = joblib.load(_ML_PATH)
+        print(f"✅ ML model loaded from {_ML_PATH}")
+    return _ML_BUNDLE
+
+
+# ---------------------------------------------------------------------
+# Graph loading
+# ---------------------------------------------------------------------
 def _ensure_graph():
     if GRAPH_STATE["G"] is not None:
         return GRAPH_STATE["G"]
@@ -81,12 +92,6 @@ def _advance_simulation():
 
 
 async def _sim_loop():
-    """Advance the graph every TICK_INTERVAL_SECONDS, forever.
-
-    Note: the pause check must be inside the lock, otherwise a pause()
-    arriving between the check and the lock acquisition lets one extra
-    automatic tick slip through after the user hit pause.
-    """
     while True:
         try:
             await asyncio.sleep(TICK_INTERVAL_SECONDS)
@@ -106,6 +111,7 @@ async def _sim_loop():
 async def lifespan(app: FastAPI):
     db.init_db()
     print("✅ Database initialised.")
+    _get_ml_model()
     task = asyncio.create_task(_sim_loop())
     print(f"✅ Simulation loop started (interval {TICK_INTERVAL_SECONDS}s)")
     try:
@@ -118,17 +124,10 @@ async def lifespan(app: FastAPI):
             pass
 
 
-app = FastAPI(
-    title="Water Loss Isolation Engine API",
-    version="2.0.0",
-    lifespan=lifespan,
-)
+app = FastAPI(title="Water Loss Isolation Engine API", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    # Dev convenience: accept any localhost port. Vite auto-selects the
-    # next free port if 5173 is busy, so a hardcoded list breaks silently.
-    # Replace with an explicit allowlist before deploying anywhere public.
     allow_origin_regex=r"^http://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
@@ -185,8 +184,6 @@ def _current_state():
 
 
 def _street_sort_key(s: str):
-    """Natural sort: 1st Road < 2nd Road < 10th Road.
-    Tuples at every position to avoid comparing int with str."""
     parts = re.split(r'(\d+)', s)
     return [(0, int(p)) if p.isdigit() else (1, p.lower()) for p in parts if p]
 
@@ -232,7 +229,6 @@ async def load_region(req: LoadRegionRequest):
 
 @app.post("/api/simulate/step")
 async def api_step():
-    """READ-ONLY. Returns current state. Does not advance."""
     await asyncio.to_thread(_ensure_graph)
     async with _graph_lock:
         return _current_state()
@@ -240,7 +236,6 @@ async def api_step():
 
 @app.post("/api/simulate/tick")
 async def api_tick():
-    """Force one immediate advance (used by the Demo Controls button)."""
     await asyncio.to_thread(_ensure_graph)
     async with _graph_lock:
         _advance_simulation()
@@ -326,7 +321,6 @@ class UnisolateRequest(BaseModel):
 
 @app.post("/api/simulate/unisolate")
 async def api_unisolate(req: UnisolateRequest):
-    """Restores a single isolated segment: reopens the valve, clears state."""
     await asyncio.to_thread(_ensure_graph)
     try:
         u_str, v_str = req.edge_id.split("__")
@@ -362,7 +356,6 @@ class ClearAllRequest(BaseModel):
 
 @app.post("/api/simulate/clear-all")
 async def api_clear_all(req: ClearAllRequest):
-    """Restores every anomalous or isolated segment in a single request."""
     await asyncio.to_thread(_ensure_graph)
     async with _graph_lock:
         G = GRAPH_STATE["G"]
@@ -399,8 +392,6 @@ async def api_zones():
 
 @app.get("/api/streets")
 async def api_streets(limit: int = 200):
-    """Sorted unique street names -- used by citizen locality dropdowns
-    to avoid shipping the full graph for ~30 strings."""
     await asyncio.to_thread(_ensure_graph)
     async with _graph_lock:
         G = GRAPH_STATE["G"]
@@ -413,6 +404,34 @@ async def api_streets(limit: int = 200):
         return {"streets": sorted_streets[:limit]}
 
 
+# ---------------------------------------------------------------------
+# ML classification endpoint
+# ---------------------------------------------------------------------
+class MLPredictRequest(BaseModel):
+    diff_pct: float
+    diff_pct_lag1: float
+    diff_pct_lag3: float
+    slope: float
+    duration_steps: int
+    flow_in_norm: float
+
+
+@app.post("/api/ml/predict")
+async def api_ml_predict(req: MLPredictRequest):
+    bundle = _get_ml_model()
+    if bundle is None:
+        raise HTTPException(status_code=503, detail="ML model not loaded. Run train_model.py first.")
+    features = bundle["features"]
+    X = [[getattr(req, f) for f in features]]
+    model = bundle["model"]
+    pred = model.predict(X)[0]
+    proba = float(model.predict_proba(X)[0].max())
+    return {"label": str(pred), "confidence": round(proba, 3)}
+
+
+# ---------------------------------------------------------------------
+# Complaints / live / etc.
+# ---------------------------------------------------------------------
 class ComplaintRequest(BaseModel):
     zone: str
     name: str

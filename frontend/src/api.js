@@ -1,6 +1,5 @@
 /**
  * api.js -- every backend call in one place.
- * Change API_BASE if your backend runs on a different port.
  */
 import axios from 'axios'
 
@@ -8,7 +7,7 @@ const API_BASE = 'http://localhost:8000'
 
 const client = axios.create({
   baseURL: API_BASE,
-  timeout: 60000,   // 60s — first /api/graph call can be slow
+  timeout: 60000,
 })
 
 // ---- graph ----
@@ -73,6 +72,12 @@ export async function resumeSim() {
 
 export async function fetchResiduals() {
   const { data } = await client.get('/api/simulate/residuals')
+  return data
+}
+
+// ---- ML ----
+export async function mlPredict(features) {
+  const { data } = await client.post('/api/ml/predict', features)
   return data
 }
 
