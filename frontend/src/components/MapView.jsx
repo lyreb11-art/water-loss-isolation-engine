@@ -1,10 +1,6 @@
 /**
-<<<<<<< HEAD
  * MapView.jsx -- the digital twin pipeline map.
  * Uses an inline style object to guarantee instant loading even under slow network or SSL proxy conditions.
-=======
- * MapView.jsx -- the digital twin map.
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
  */
 import { useEffect, useRef } from 'react'
 import * as maplibregl from 'maplibre-gl'
@@ -12,7 +8,6 @@ import { setWorkerUrl } from 'maplibre-gl'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
-<<<<<<< HEAD
 // Point MapLibre at the local worker bundle
 setWorkerUrl(workerUrl)
 
@@ -46,13 +41,6 @@ const DARK_GRID_STYLE = {
     }
   ]
 }
-=======
-// Point MapLibre at the correct worker URL for Vite bundling.
-// Without this, the map container renders but tiles never load (silent hang).
-setWorkerUrl(workerUrl)
-
-const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
 
 function edgeColor(edge) {
   const c = edge.classification
@@ -73,7 +61,6 @@ export default function MapView({
   graph,           // { nodes: [...], edges: [...] }
   height = 600,
   center = null,   // [lon, lat] -- optional focus
-<<<<<<< HEAD
   zoom = 13.5,
   filterNodes = null,  // Set of node ids to restrict to
 }) {
@@ -87,13 +74,6 @@ export default function MapView({
     prevFilterNodesRef.current = filterNodes
     hasAutoFittedRef.current = false
   }
-=======
-  zoom = 13,
-  filterNodes = null,  // Set of node ids to restrict to (for citizen zone view)
-}) {
-  const mapContainer = useRef(null)
-  const mapRef = useRef(null)
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
 
   // ---- initialize map once ----
   useEffect(() => {
@@ -101,13 +81,8 @@ export default function MapView({
 
     const m = new maplibregl.Map({
       container: mapContainer.current,
-<<<<<<< HEAD
       style: DARK_GRID_STYLE,
       center: center || [72.8347, 19.0596],   // Bandra West / Grid center
-=======
-      style: MAP_STYLE,
-      center: center || [72.8347, 19.0596],   // Bandra West
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
       zoom,
       pitch: 35,
       attributionControl: true,
@@ -116,7 +91,6 @@ export default function MapView({
     m.addControl(new maplibregl.NavigationControl(), 'top-right')
     mapRef.current = m
 
-<<<<<<< HEAD
     function setupLayers() {
       if (isLoadedRef.current) return
       isLoadedRef.current = true
@@ -175,54 +149,6 @@ export default function MapView({
       }
 
       // hover popup
-=======
-    m.on('load', () => {
-      // sources will be added by the "update data" effect
-      m.addSource('edges', { type: 'geojson', data: emptyFC() })
-      m.addSource('nodes', { type: 'geojson', data: emptyFC() })
-
-      // glow layer (wide, translucent) -- drawn first (below)
-      m.addLayer({
-        id: 'edges-glow',
-        type: 'line',
-        source: 'edges',
-        filter: ['in', ['get', 'classification'], ['literal', ['Theft', 'Burst', 'Leak']]],
-        paint: {
-          'line-color': ['get', 'color'],
-          'line-width': 18,
-          'line-opacity': 0.25,
-          'line-blur': 8,
-        },
-      })
-
-      // main edges
-      m.addLayer({
-        id: 'edges-main',
-        type: 'line',
-        source: 'edges',
-        paint: {
-          'line-color': ['get', 'color'],
-          'line-width': ['get', 'width'],
-          'line-opacity': 0.9,
-        },
-      })
-
-      // nodes
-      m.addLayer({
-        id: 'nodes',
-        type: 'circle',
-        source: 'nodes',
-        paint: {
-          'circle-radius': 3,
-          'circle-color': '#5CC8D6',
-          'circle-opacity': 0.7,
-          'circle-stroke-width': 1,
-          'circle-stroke-color': '#0E1419',
-        },
-      })
-
-      // popup on hover
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
       const popup = new maplibregl.Popup({
         closeButton: false,
         closeOnClick: false,
@@ -238,15 +164,9 @@ export default function MapView({
           .setLngLat(e.lngLat)
           .setHTML(
             `<div style="font-family:Inter,sans-serif;">
-<<<<<<< HEAD
                <div style="color:#FFB454; font-size:11px; text-transform:uppercase; letter-spacing:0.08em;">${p.street || 'Segment'}</div>
                <div style="margin-top:4px; color:#E8EEF5; font-weight:600;">${p.classification}</div>
-               <div style="color:#9AA7B6; font-size:11px;">confidence ${(Number(p.confidence) * 100).toFixed(0)}% · Δ ${Number(p.diff_pct).toFixed(1)}%</div>
-=======
-               <div style="color:#FFB454; font-size:11px; text-transform:uppercase; letter-spacing:0.08em;">${p.street || 'Unnamed'}</div>
-               <div style="margin-top:4px; color:#E8EEF5; font-weight:600;">${p.classification}</div>
-               <div style="color:#9AA7B6; font-size:11px;">confidence ${(p.confidence * 100).toFixed(0)}% · Δ ${Number(p.diff_pct).toFixed(1)}%</div>
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
+               <div style="color:#9AA7B6; font-size:11px;">confidence ${(Number(p.confidence || 0) * 100).toFixed(0)}% · Δ ${Number(p.diff_pct || 0).toFixed(1)}%</div>
              </div>`
           )
           .addTo(m)
@@ -257,53 +177,33 @@ export default function MapView({
         popup.remove()
       })
 
-<<<<<<< HEAD
       updateSources()
     }
 
     m.on('load', setupLayers)
     m.on('styledata', setupLayers)
-=======
-      // force update once layers exist
-      updateSources()
-    })
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
 
     return () => {
       m.remove()
       mapRef.current = null
-<<<<<<< HEAD
       isLoadedRef.current = false
     }
   }, []) // eslint-disable-line
-=======
-    }
-  }, [])   // eslint-disable-line
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
 
   // ---- update data when graph prop changes ----
   useEffect(() => {
     updateSources()
-<<<<<<< HEAD
   }, [graph, filterNodes]) // eslint-disable-line
 
   function updateSources() {
     const m = mapRef.current
     if (!m || !graph || !isLoadedRef.current) return
-=======
-  }, [graph, filterNodes])   // eslint-disable-line
-
-  function updateSources() {
-    const m = mapRef.current
-    if (!m || !graph) return
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
     const src = m.getSource('edges')
     const nsrc = m.getSource('nodes')
     if (!src || !nsrc) return
 
     // ---- edges ----
     const features = []
-<<<<<<< HEAD
     if (Array.isArray(graph.edges)) {
       for (const e of graph.edges) {
         if (filterNodes && (!filterNodes.has(e.source) || !filterNodes.has(e.target))) {
@@ -323,31 +223,11 @@ export default function MapView({
           geometry: { type: 'LineString', coordinates: e.path },
         })
       }
-=======
-    for (const e of graph.edges) {
-      if (filterNodes && (!filterNodes.has(e.source) || !filterNodes.has(e.target))) {
-        continue
-      }
-      features.push({
-        type: 'Feature',
-        properties: {
-          id: e.id,
-          street: e.street,
-          classification: e.classification,
-          confidence: e.confidence,
-          diff_pct: e.diff_pct,
-          color: edgeColor(e),
-          width: edgeWidth(e),
-        },
-        geometry: { type: 'LineString', coordinates: e.path },
-      })
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
     }
     src.setData({ type: 'FeatureCollection', features })
 
     // ---- nodes ----
     const nodeFeatures = []
-<<<<<<< HEAD
     if (Array.isArray(graph.nodes)) {
       for (const n of graph.nodes) {
         if (filterNodes && !filterNodes.has(n.id)) continue
@@ -369,26 +249,6 @@ export default function MapView({
       }
       if (!bounds.isEmpty()) {
         m.fitBounds(bounds, { padding: 40, maxZoom: 15, duration: 800 })
-=======
-    for (const n of graph.nodes) {
-      if (filterNodes && !filterNodes.has(n.id)) continue
-      nodeFeatures.push({
-        type: 'Feature',
-        properties: { id: n.id, street: n.street },
-        geometry: { type: 'Point', coordinates: [n.lon, n.lat] },
-      })
-    }
-    nsrc.setData({ type: 'FeatureCollection', features: nodeFeatures })
-
-    // ---- auto-fit to filtered nodes ----
-    if (filterNodes && features.length > 0) {
-      const bounds = new maplibregl.LngLatBounds()
-      for (const e of features) {
-        for (const coord of e.geometry.coordinates) bounds.extend(coord)
-      }
-      if (!bounds.isEmpty()) {
-        m.fitBounds(bounds, { padding: 60, duration: 600 })
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
       }
     }
   }
@@ -409,11 +269,8 @@ export default function MapView({
         borderRadius: 12,
         overflow: 'hidden',
         border: '1px solid #2A3742',
-<<<<<<< HEAD
         position: 'relative',
         background: '#0E1419',
-=======
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
       }}
     />
   )

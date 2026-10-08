@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchLiveReadings, addLiveReading } from '../api'
@@ -187,12 +186,11 @@ export default function HardwareLive() {
           <div className="kpi-label">AI Status</div>
           <div className="mt-1">
             {latest ? (
-              <span className={`pill ${
-                latest.classification === 'Normal' ? 'pill-stable' :
-                latest.classification === 'Leak' ? 'pill-leak' :
-                latest.classification === 'Theft' ? 'pill-theft' :
-                latest.classification === 'Burst' ? 'pill-burst' : 'pill-maintenance'
-              }`}>
+              <span className={`pill ${latest.classification === 'Normal' ? 'pill-stable' :
+                  latest.classification === 'Leak' ? 'pill-leak' :
+                    latest.classification === 'Theft' ? 'pill-theft' :
+                      latest.classification === 'Burst' ? 'pill-burst' : 'pill-maintenance'
+                }`}>
                 {latest.classification} ({Math.round(latest.confidence * 100)}%)
               </span>
             ) : (
@@ -233,11 +231,10 @@ export default function HardwareLive() {
             <button
               onClick={handleToggleValve}
               disabled={isSubmitting}
-              className={`w-full py-3 rounded-lg font-semibold text-sm transition-all mb-5 ${
-                valveClosed
+              className={`w-full py-3 rounded-lg font-semibold text-sm transition-all mb-5 ${valveClosed
                   ? 'bg-success text-base hover:bg-success/80'
                   : 'bg-danger/20 text-danger border border-danger/50 hover:bg-danger/30'
-              }`}
+                }`}
             >
               {valveClosed ? '🔓 REOPEN SOLENOID VALVE' : '🔒 EMERGENCY SHUT OFF VALVE'}
             </button>
@@ -318,8 +315,8 @@ export default function HardwareLive() {
               To send real ESP32 microcontroller telemetry, publish JSON messages to your MQTT Broker:
             </p>
             <div className="bg-base p-3 rounded text-[11px] font-mono text-teal border border-border">
-              Broker: broker.hivemq.com<br/>
-              Topic: waterloss/hardware/sensor<br/>
+              Broker: broker.hivemq.com<br />
+              Topic: waterloss/hardware/sensor<br />
               Payload: &#123;"flow_in": 45.2, "flow_out": 44.8, "valve_closed": false&#125;
             </div>
             <p className="text-[11px] text-muted mt-3">
@@ -407,9 +404,8 @@ export default function HardwareLive() {
                   </div>
                   <div className="w-full bg-base rounded-full h-3 overflow-hidden border border-border">
                     <div
-                      className={`h-full transition-all duration-500 rounded-full ${
-                        latest.diff_pct > 35 ? 'bg-danger' : latest.diff_pct > 10 ? 'bg-warning' : 'bg-success'
-                      }`}
+                      className={`h-full transition-all duration-500 rounded-full ${latest.diff_pct > 35 ? 'bg-danger' : latest.diff_pct > 10 ? 'bg-warning' : 'bg-success'
+                        }`}
                       style={{ width: `${Math.min(100, latest.diff_pct)}%` }}
                     />
                   </div>
@@ -463,12 +459,11 @@ export default function HardwareLive() {
                             ₹ {fin.costPerHourINR}
                           </td>
                           <td className="py-2 px-3">
-                            <span className={`pill ${
-                              r.classification === 'Normal' ? 'pill-stable' :
-                              r.classification === 'Leak' ? 'pill-leak' :
-                              r.classification === 'Theft' ? 'pill-theft' :
-                              r.classification === 'Burst' ? 'pill-burst' : 'pill-maintenance'
-                            }`}>
+                            <span className={`pill ${r.classification === 'Normal' ? 'pill-stable' :
+                                r.classification === 'Leak' ? 'pill-leak' :
+                                  r.classification === 'Theft' ? 'pill-theft' :
+                                    r.classification === 'Burst' ? 'pill-burst' : 'pill-maintenance'
+                              }`}>
                               {r.classification}
                             </span>
                           </td>
@@ -487,17 +482,6 @@ export default function HardwareLive() {
           </div>
         </div>
       </div>
-=======
-import { useNavigate } from 'react-router-dom'
-export default function HardwareLive() {
-  const nav = useNavigate()
-  return (
-    <div className="p-8">
-      <h1 className="text-3xl font-bold mb-2">Hardware Live</h1>
-      <p className="text-muted mb-6">Public monitoring page — no login required.</p>
-      <button onClick={() => nav('/')} className="btn btn-ghost">Back to login</button>
-      <div className="mt-8 text-dim text-sm">Full hardware page — coming in Message 5.</div>
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
     </div>
   )
 }
