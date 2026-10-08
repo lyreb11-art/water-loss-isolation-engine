@@ -1,0 +1,50 @@
+# ============ Python / backend ============
+venv/
+env/
+.venv/
+fresh_env/
+**/fresh_env/
+**/venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Project-specific backend artefacts
+backend/waterloss.db
+backend/.osm_cache/
+backend/cache/
+*.osm_cache/
+*.pkl
+
+# ============ Node / frontend ============
+node_modules/
+**/node_modules/
+dist/
+.vite/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ============ IDE ============
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ============ OS ============
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============ Secrets ============
+.env
+.env.local
+*.env
