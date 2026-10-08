@@ -21,7 +21,7 @@ export default function CitizenReport() {
     fetchStreets()
       .then((streets) => {
         if (!alive) return
-        const list = streets.slice(0, 60)
+        const list = (streets || []).slice(0, 60)
         setLocalities(list)
         if (!locality && list.length > 0) setLocality(zone || list[0])
       })

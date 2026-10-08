@@ -16,15 +16,13 @@ const DARK_GRID_STYLE = {
   version: 8,
   name: 'Digital Twin Dark Base',
   sources: {
-    'carto-tiles': {
+    'dark-tiles': {
       type: 'raster',
       tiles: [
-        'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-        'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-        'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'
       ],
       tileSize: 256,
-      attribution: '&copy; OpenStreetMap &copy; CARTO'
+      attribution: '&copy; Esri &copy; OpenStreetMap'
     }
   },
   layers: [
@@ -34,9 +32,9 @@ const DARK_GRID_STYLE = {
       paint: { 'background-color': '#0E1419' }
     },
     {
-      id: 'carto-tiles-layer',
+      id: 'dark-tiles-layer',
       type: 'raster',
-      source: 'carto-tiles',
+      source: 'dark-tiles',
       paint: { 'raster-opacity': 0.85 }
     }
   ]
@@ -102,28 +100,29 @@ export default function MapView({
         m.addSource('nodes', { type: 'geojson', data: emptyFC() })
       }
 
-      // glow layer for leaks/bursts
+      // Edge glow layer for anomalies
       if (!m.getLayer('edges-glow')) {
         m.addLayer({
           id: 'edges-glow',
           type: 'line',
           source: 'edges',
-          filter: ['in', ['get', 'classification'], ['literal', ['Theft', 'Burst', 'Leak']]],
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
           paint: {
             'line-color': ['get', 'color'],
-            'line-width': 18,
+            'line-width': ['*', ['get', 'width'], 2.5],
             'line-opacity': 0.35,
-            'line-blur': 8,
+            'line-blur': 3,
           },
         })
       }
 
-      // main edges
+      // Main pipe segments
       if (!m.getLayer('edges-main')) {
         m.addLayer({
           id: 'edges-main',
           type: 'line',
           source: 'edges',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
           paint: {
             'line-color': ['get', 'color'],
             'line-width': ['get', 'width'],
@@ -132,27 +131,64 @@ export default function MapView({
         })
       }
 
-      // nodes
-      if (!m.getLayer('nodes')) {
+      // Junction glow
+      if (!m.getLayer('nodes-glow')) {
         m.addLayer({
-          id: 'nodes',
+          id: 'nodes-glow',
           type: 'circle',
           source: 'nodes',
           paint: {
-            'circle-radius': 3.5,
+            'circle-radius': 8,
             'circle-color': '#5CC8D6',
-            'circle-opacity': 0.85,
-            'circle-stroke-width': 1,
+            'circle-opacity': 0.25,
+            'circle-blur': 1,
+          },
+        })
+      }
+
+      // Junction points
+      if (!m.getLayer('nodes-main')) {
+        m.addLayer({
+          id: 'nodes-main',
+          type: 'circle',
+          source: 'nodes',
+          paint: {
+            'circle-radius': 4,
+            'circle-color': '#5CC8D6',
+            'circle-stroke-width': 1.5,
             'circle-stroke-color': '#0E1419',
           },
         })
       }
 
-      // hover popup
+      // Junction labels
+      if (!m.getLayer('nodes-labels')) {
+        m.addLayer({
+          id: 'nodes-labels',
+          type: 'symbol',
+          source: 'nodes',
+          layout: {
+            'text-field': ['get', 'street'],
+            'text-size': 11,
+            'text-offset': [0, 1.2],
+            'text-anchor': 'top',
+            'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+            'text-max-width': 10,
+          },
+          paint: {
+            'text-color': '#E8EEF5',
+            'text-halo-color': '#0E1419',
+            'text-halo-width': 1.5,
+          },
+        })
+      }
+
+      // Tooltips & hover popups
       const popup = new maplibregl.Popup({
         closeButton: false,
         closeOnClick: false,
-        offset: 8,
+        offset: 12,
+        className: 'map-tooltip',
       })
 
       m.on('mouseenter', 'edges-main', (e) => {
