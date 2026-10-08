@@ -115,9 +115,12 @@ export async function updateComplaint(id, status, officialReply = null) {
 export async function fetchLiveReadings(limit = 40) {
   const { data } = await client.get('/api/live', { params: { limit } })
   return data
+<<<<<<< HEAD
 }
 
 export async function addLiveReading(reading) {
   const { data } = await client.post('/api/live', reading)
   return data
+=======
+>>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
 }

@@ -142,14 +142,22 @@ def build_network_from_place(place_name: str = DEFAULT_PLACE):
                 geometry=_edge_geometry(data, G, u, v),
             )
 
+<<<<<<< HEAD
         source = (f"Real Mumbai street network via OpenStreetMap "
+=======
+        source = (f"✅ Real Mumbai street network via OpenStreetMap "
+>>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
                   f"({G.number_of_nodes()} junctions · {G.number_of_edges()} segments · "
                   f"region: {place_name})")
         return G, source
 
     except Exception as e:
         fb = _offline_fallback()
+<<<<<<< HEAD
         return fb, (f"OpenStreetMap unavailable ({type(e).__name__}: {e}). "
+=======
+        return fb, (f"⚠️ OpenStreetMap unavailable ({type(e).__name__}: {e}). "
+>>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
                     f"Using offline Bandra West sample.")
 
 

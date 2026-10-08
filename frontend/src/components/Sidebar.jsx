@@ -9,14 +9,20 @@ const CITIZEN_LINKS = [
   { to: '/citizen',         label: '🏘️ Home',          exact: true },
   { to: '/citizen/notices', label: '📋 Notices' },
   { to: '/citizen/report',  label: '📢 Report Issue' },
+<<<<<<< HEAD
   { to: '/hardware',        label: '📡 Hardware Live' },
+=======
+>>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
 ]
 
 const OFFICIAL_LINKS = [
   { to: '/official',          label: '🛠️ Official Home', exact: true },
   { to: '/official/controls', label: '🎛️ Demo Controls' },
   { to: '/official/actions',  label: '🚨 Action Centre' },
+<<<<<<< HEAD
   { to: '/hardware',          label: '📡 Hardware Live' },
+=======
+>>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
 ]
 
 export default function Sidebar() {
