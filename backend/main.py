@@ -50,7 +50,7 @@ def _get_ml_model():
     global _ML_BUNDLE
     if _ML_BUNDLE is None and os.path.exists(_ML_PATH):
         _ML_BUNDLE = joblib.load(_ML_PATH)
-        print(f"✅ ML model loaded from {_ML_PATH}")
+        print(f"[OK] ML model loaded from {_ML_PATH}")
     return _ML_BUNDLE
 
 
@@ -65,7 +65,7 @@ def _ensure_graph():
             G, source = osm_network.build_network_from_place(GRAPH_STATE["place_name"])
             GRAPH_STATE["G"] = G
             GRAPH_STATE["source"] = source
-            print(f"✅ Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+            print(f"[OK] Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
     return GRAPH_STATE["G"]
 
 
@@ -104,16 +104,16 @@ async def _sim_loop():
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            print(f"⚠️  sim loop tick failed: {e}")
+            print(f"[WARN] sim loop tick failed: {e}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
-    print("✅ Database initialised.")
+    print("[OK] Database initialised.")
     _get_ml_model()
     task = asyncio.create_task(_sim_loop())
-    print(f"✅ Simulation loop started (interval {TICK_INTERVAL_SECONDS}s)")
+    print(f"[OK] Simulation loop started (interval {TICK_INTERVAL_SECONDS}s)")
     try:
         yield
     finally:
