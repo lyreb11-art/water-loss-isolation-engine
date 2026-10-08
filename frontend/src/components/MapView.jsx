@@ -11,34 +11,8 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 // Point MapLibre at the local worker bundle
 setWorkerUrl(workerUrl)
 
-// Built-in dark theme style object: Loads immediately with 0ms network latency
-const DARK_GRID_STYLE = {
-  version: 8,
-  name: 'Digital Twin Dark Base',
-  sources: {
-    'dark-tiles': {
-      type: 'raster',
-      tiles: [
-        'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'
-      ],
-      tileSize: 256,
-      attribution: '&copy; Esri &copy; OpenStreetMap'
-    }
-  },
-  layers: [
-    {
-      id: 'background',
-      type: 'background',
-      paint: { 'background-color': '#0E1419' }
-    },
-    {
-      id: 'dark-tiles-layer',
-      type: 'raster',
-      source: 'dark-tiles',
-      paint: { 'raster-opacity': 0.85 }
-    }
-  ]
-}
+const CARTO_KEY = 'cb1_4elk_1_2db6c44ef83f43499555ee41'
+const MAP_STYLE = `https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json?api_key=${CARTO_KEY}`
 
 function edgeColor(edge) {
   const c = edge.classification
@@ -79,7 +53,7 @@ export default function MapView({
 
     const m = new maplibregl.Map({
       container: mapContainer.current,
-      style: DARK_GRID_STYLE,
+      style: MAP_STYLE,
       center: center || [72.8347, 19.0596],   // Bandra West / Grid center
       zoom,
       pitch: 35,
