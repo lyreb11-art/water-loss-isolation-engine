@@ -1,9 +1,14 @@
-/**
- * OfficialActions.jsx -- resolve citizen tickets, dispatch crews.
- */
 import { useEffect, useState } from 'react'
 import { useAuth } from '../AuthContext'
-import { fetchComplaints, updateComplaint, fetchAuditLog } from '../api'
+import {
+  fetchComplaints,
+  updateComplaint,
+  fetchAuditLog,
+  addWorklog,
+  dispatchCrew,
+  markOnsite,
+  resolveComplaint,
+} from '../api'
 import AppLayout from '../components/AppLayout'
 
 const TABS = ['Open', 'In Progress', 'Resolved']
@@ -128,6 +133,11 @@ export default function OfficialActions() {
                   <span className="text-primary font-mono text-sm">#{c.id}</span>
                   <span className={`pill ${pillClass}`}>{c.status}</span>
                   <span className="font-semibold text-text">{c.zone}</span>
+                  {c.stage && (
+                    <span className="text-xs text-muted font-mono bg-base px-2 py-0.5 rounded border border-border">
+                      stage: {c.stage}
+                    </span>
+                  )}
                   <span className="text-[11px] text-muted ml-auto">
                     {c.created_at?.slice(0, 19).replace('T', ' ')}
                   </span>
@@ -162,28 +172,24 @@ export default function OfficialActions() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2">
+                <div className="flex gap-2">
                   <button
                     onClick={() => save(c, currentStatus, currentReply)}
                     className="btn btn-primary text-sm"
                   >
                     💾 Save update
                   </button>
-                  <button
-                    onClick={() => save(c, 'In Progress',
-                      currentReply || 'Crew dispatched to your zone.')}
-                    className="btn btn-ghost text-sm"
-                  >
-                    🚨 Dispatch crew
-                  </button>
-                  <button
-                    onClick={() => save(c, 'Resolved',
-                      currentReply || 'Issue resolved.')}
-                    className="btn btn-ghost text-sm border-success/40 text-success"
-                  >
-                    ✅ Mark resolved
-                  </button>
                 </div>
+
+                {/* Structured Work Log & One-Tap Lifecycle Shortcuts */}
+                <TicketActionControls
+                  complaint={c}
+                  onRefresh={load}
+                  showToast={(msg) => {
+                    setToast(msg)
+                    setTimeout(() => setToast(''), 3500)
+                  }}
+                />
               </div>
             )
           })}
@@ -224,5 +230,136 @@ export default function OfficialActions() {
         </div>
       </div>
     </AppLayout>
+  )
+}
+
+function TicketActionControls({ complaint: c, onRefresh, showToast }) {
+  const [actionType, setActionType] = useState('pipe_replaced')
+  const [actionNotes, setActionNotes] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const handleLog = async () => {
+    try {
+      setIsSubmitting(true)
+      await addWorklog(c.id, actionType, actionNotes)
+      setActionNotes('')
+      showToast('✅ Work log entry added.')
+      await onRefresh()
+    } catch (err) {
+      showToast('⚠️ ' + (err?.message || 'Failed to log action'))
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleDispatch = async () => {
+    try {
+      setIsSubmitting(true)
+      await dispatchCrew(c.id)
+      showToast('🚚 Crew dispatched on real route.')
+      await onRefresh()
+    } catch (err) {
+      showToast('⚠️ ' + (err?.message || 'Dispatch failed'))
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleOnsite = async () => {
+    try {
+      setIsSubmitting(true)
+      await markOnsite(c.id)
+      showToast('📍 Crew marked on-site.')
+      await onRefresh()
+    } catch (err) {
+      showToast('⚠️ ' + (err?.message || 'Mark on-site failed'))
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleResolve = async () => {
+    const reply = prompt('Resolution summary for citizen:', 'Work completed and water pressure restored.')
+    if (!reply) return
+    try {
+      setIsSubmitting(true)
+      await resolveComplaint(c.id, reply)
+      showToast('✅ Complaint resolved.')
+      await onRefresh()
+    } catch (err) {
+      showToast('⚠️ ' + (err?.message || 'Resolve failed'))
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="mt-4 pt-4 border-t border-border">
+      <div className="text-xs text-muted uppercase tracking-wider mb-2 flex items-center justify-between">
+        <span>Log a work update</span>
+        {c.stage && (
+          <span className="text-[11px] font-mono text-teal">
+            Current stage: <strong>{c.stage}</strong>
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-[200px_1fr_auto] gap-2 items-center">
+        <select
+          value={actionType}
+          onChange={(e) => setActionType(e.target.value)}
+          className="input text-xs"
+        >
+          <option value="crew_dispatched">🔧 Crew dispatched</option>
+          <option value="crew_arrived">🚚 Crew arrived</option>
+          <option value="assessment">🔍 Assessment</option>
+          <option value="excavation_started">⛏️ Excavation started</option>
+          <option value="pipe_replaced">🔩 Pipe replaced</option>
+          <option value="joint_resealed">🔗 Joint resealed</option>
+          <option value="valve_adjusted">🎛️ Valve adjusted</option>
+          <option value="temporary_patch">🩹 Temporary patch</option>
+          <option value="pressure_test">🧪 Pressure test passed</option>
+          <option value="supply_restored">💧 Supply restored</option>
+          <option value="resolved">✅ Resolved</option>
+        </select>
+        <input
+          className="input text-xs"
+          placeholder="Optional note (visible to citizen in work log)"
+          value={actionNotes}
+          onChange={(e) => setActionNotes(e.target.value)}
+        />
+        <button
+          onClick={handleLog}
+          disabled={isSubmitting}
+          className="btn btn-primary text-xs whitespace-nowrap"
+        >
+          Log Action
+        </button>
+      </div>
+
+      {/* One-tap lifecycle shortcuts */}
+      <div className="flex gap-2 mt-3 flex-wrap">
+        <button
+          onClick={handleDispatch}
+          disabled={isSubmitting}
+          className="btn btn-ghost text-xs"
+        >
+          🚚 Dispatch crew
+        </button>
+        <button
+          onClick={handleOnsite}
+          disabled={isSubmitting}
+          className="btn btn-ghost text-xs"
+        >
+          📍 Mark on-site
+        </button>
+        <button
+          onClick={handleResolve}
+          disabled={isSubmitting}
+          className="btn btn-ghost text-xs border-success/40 text-success"
+        >
+          ✅ Resolve ticket
+        </button>
+      </div>
+    </div>
   )
 }

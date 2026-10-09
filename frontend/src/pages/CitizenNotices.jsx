@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../AuthContext'
 import { fetchComplaints } from '../api'
 import AppLayout from '../components/AppLayout'
@@ -65,6 +66,17 @@ export default function CitizenNotices() {
                     {c.official_reply}
                   </div>
                 )}
+                <div className="mt-3 flex items-center justify-between pt-2 border-t border-border/40">
+                  <span className="text-[11px] text-muted">
+                    Reported by {c.name || 'Anonymous'}
+                  </span>
+                  <Link
+                    to={`/citizen/track/${c.id}`}
+                    className="btn btn-ghost text-xs text-primary hover:text-primary2 font-medium py-1 px-2.5"
+                  >
+                    Track this complaint →
+                  </Link>
+                </div>
               </div>
             )
           })}

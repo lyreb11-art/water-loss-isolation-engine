@@ -8,6 +8,7 @@ import OfficialHome from './pages/OfficialHome'
 import OfficialControls from './pages/OfficialControls'
 import OfficialActions from './pages/OfficialActions'
 import HardwareLive from './pages/HardwareLive'
+import TrackComplaint from './pages/TrackComplaint'
 
 function RequireRole({ role, children }) {
   const { role: current } = useAuth()
@@ -21,9 +22,10 @@ function AppRoutes() {
       <Route path="/" element={<Login />} />
 
       {/* Citizen */}
-      <Route path="/citizen"         element={<RequireRole role="Citizen"><CitizenHome /></RequireRole>} />
-      <Route path="/citizen/notices" element={<RequireRole role="Citizen"><CitizenNotices /></RequireRole>} />
-      <Route path="/citizen/report"  element={<RequireRole role="Citizen"><CitizenReport /></RequireRole>} />
+      <Route path="/citizen"           element={<RequireRole role="Citizen"><CitizenHome /></RequireRole>} />
+      <Route path="/citizen/notices"   element={<RequireRole role="Citizen"><CitizenNotices /></RequireRole>} />
+      <Route path="/citizen/report"    element={<RequireRole role="Citizen"><CitizenReport /></RequireRole>} />
+      <Route path="/citizen/track/:id" element={<RequireRole role="Citizen"><TrackComplaint /></RequireRole>} />
 
       {/* Official */}
       <Route path="/official"          element={<RequireRole role="Official"><OfficialHome /></RequireRole>} />

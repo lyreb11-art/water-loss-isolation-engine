@@ -1,13 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../AuthContext'
-<<<<<<< HEAD
-import { addComplaint, fetchGraph } from '../api'
-import AppLayout from '../components/AppLayout'
-import { naturalSortStreets } from '../utils/sort'
-=======
 import { addComplaint, fetchStreets } from '../api'
 import AppLayout from '../components/AppLayout'
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
 
 const CATEGORIES = ['Leak', 'No water', 'Low pressure', 'Contaminated water', 'Other']
 
@@ -20,21 +14,6 @@ export default function CitizenReport() {
   const [message, setMessage] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState('')
-<<<<<<< HEAD
-
-  useEffect(() => {
-    let alive = true
-    fetchGraph().then((g) => {
-      if (!alive) return
-      const set = new Set()
-      g.graph.nodes.forEach((n) => {
-        if (n.street && !n.street.startsWith('Junction')) set.add(n.street)
-      })
-      const sorted = naturalSortStreets([...set]).slice(0, 40)
-      setLocalities(sorted)
-      if (!locality && sorted.length > 0) setLocality(zone || sorted[0])
-    })
-=======
   const [loadingStreets, setLoadingStreets] = useState(true)
 
   useEffect(() => {
@@ -50,7 +29,6 @@ export default function CitizenReport() {
       .finally(() => {
         if (alive) setLoadingStreets(false)
       })
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
     return () => { alive = false }
   }, [])   // eslint-disable-line
 
@@ -83,16 +61,11 @@ export default function CitizenReport() {
 
         {toast && (
           <div
-<<<<<<< HEAD
-            className={`card p-3 mb-4 text-sm ${toast.startsWith('✅') ? 'border-success/40 bg-success/5 text-success' : 'border-danger/40 bg-danger/5 text-danger'
-              }`}
-=======
             className={`card p-3 mb-4 text-sm ${
               toast.startsWith('✅')
                 ? 'border-success/40 bg-success/5 text-success'
                 : 'border-danger/40 bg-danger/5 text-danger'
             }`}
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
           >
             {toast}
           </div>
@@ -105,10 +78,6 @@ export default function CitizenReport() {
               className="input"
               value={locality}
               onChange={(e) => setLocality(e.target.value)}
-<<<<<<< HEAD
-            >
-              {localities.map((l) => (
-=======
               disabled={loadingStreets}
             >
               {loadingStreets && <option>Loading localities…</option>}
@@ -116,7 +85,6 @@ export default function CitizenReport() {
                 <option>No localities available</option>
               )}
               {!loadingStreets && localities.map((l) => (
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
                 <option key={l} value={l}>{l}</option>
               ))}
             </select>
@@ -139,18 +107,11 @@ export default function CitizenReport() {
                   key={c}
                   type="button"
                   onClick={() => setCategory(c)}
-<<<<<<< HEAD
-                  className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${category === c
-                    ? 'bg-primary/15 text-primary border-primary/40'
-                    : 'bg-panel text-muted border-border hover:text-text'
-                    }`}
-=======
                   className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${
                     category === c
                       ? 'bg-primary/15 text-primary border-primary/40'
                       : 'bg-panel text-muted border-border hover:text-text'
                   }`}
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
                 >
                   {c}
                 </button>

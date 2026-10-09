@@ -115,12 +115,60 @@ export async function updateComplaint(id, status, officialReply = null) {
 export async function fetchLiveReadings(limit = 40) {
   const { data } = await client.get('/api/live', { params: { limit } })
   return data
-<<<<<<< HEAD
 }
 
 export async function addLiveReading(reading) {
   const { data } = await client.post('/api/live', reading)
   return data
-=======
->>>>>>> babbc12ee2f070745c17028f47c1dc5cd09fd76f
+}
+
+// ---- complaint tracking & lifecycle ----
+export async function fetchComplaint(id) {
+  const { data } = await client.get(`/api/complaints/${id}`)
+  return data
+}
+
+export async function fetchRoute(id) {
+  const { data } = await client.get(`/api/complaints/${id}/route`)
+  return data
+}
+
+export async function fetchWorklog(id) {
+  const { data } = await client.get(`/api/complaints/${id}/worklog`)
+  return data
+}
+
+export async function fetchImpact(id) {
+  const { data } = await client.get(`/api/complaints/${id}/impact`)
+  return data
+}
+
+export async function addWorklog(id, actionType, notes, metadata = {}) {
+  const { data } = await client.post(`/api/complaints/${id}/worklog`, {
+    action_type: actionType,
+    notes,
+    metadata,
+  })
+  return data
+}
+
+export async function dispatchCrew(id, depotNode = null, note = null) {
+  const { data } = await client.post(`/api/complaints/${id}/dispatch`, {
+    depot_node: depotNode,
+    note,
+  })
+  return data
+}
+
+export async function markOnsite(id) {
+  const { data } = await client.post(`/api/complaints/${id}/onsite`)
+  return data
+}
+
+export async function resolveComplaint(id, reply) {
+  const { data } = await client.post(`/api/complaints/${id}/resolve`, {
+    status: 'Resolved',
+    official_reply: reply,
+  })
+  return data
 }

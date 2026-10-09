@@ -63,6 +63,32 @@ def init_db():
             reason TEXT
         )
     """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS work_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            complaint_id INTEGER NOT NULL,
+            action_type TEXT NOT NULL,
+            notes TEXT,
+            metadata TEXT,
+            logged_by TEXT,
+            logged_at TEXT NOT NULL,
+            FOREIGN KEY (complaint_id) REFERENCES complaints(id)
+        )
+    """)
+
+    # Add lifecycle columns to complaints if they don't exist (SQLite safe pattern)
+    for col, typ in [
+        ("stage", "TEXT DEFAULT 'reported'"),
+        ("dispatched_at", "TEXT"),
+        ("onsite_at", "TEXT"),
+        ("resolved_at", "TEXT"),
+        ("assigned_depot", "TEXT"),
+    ]:
+        try:
+            cur.execute(f"ALTER TABLE complaints ADD COLUMN {col} {typ}")
+        except sqlite3.OperationalError:
+            pass
+
     conn.commit()
     conn.close()
 
@@ -90,10 +116,41 @@ def list_complaints():
 
 def update_complaint(complaint_id, status, official_reply=None):
     conn = get_conn()
-    conn.execute(
-        "UPDATE complaints SET status=?, official_reply=? WHERE id=?",
-        (status, official_reply, complaint_id),
-    )
+    now = now_iso()
+    if status == "Resolved":
+        conn.execute(
+            """UPDATE complaints 
+               SET status=?, official_reply=?, stage='resolved',
+                   resolved_at=COALESCE(resolved_at, ?),
+                   dispatched_at=COALESCE(dispatched_at, ?),
+                   onsite_at=COALESCE(onsite_at, ?)
+               WHERE id=?""",
+            (status, official_reply, now, now, now, complaint_id),
+        )
+        # Log worklog if not already resolved
+        conn.execute(
+            """INSERT INTO work_logs (complaint_id, action_type, notes, metadata, logged_by, logged_at)
+               VALUES (?, 'resolved', ?, '{}', 'admin', ?)""",
+            (complaint_id, official_reply or "Work completed and resolved", now),
+        )
+    elif status == "In Progress":
+        conn.execute(
+            """UPDATE complaints 
+               SET status=?, official_reply=?, stage=CASE WHEN stage='reported' THEN 'dispatched' ELSE stage END,
+                   dispatched_at=COALESCE(dispatched_at, ?)
+               WHERE id=?""",
+            (status, official_reply, now, complaint_id),
+        )
+        conn.execute(
+            """INSERT INTO work_logs (complaint_id, action_type, notes, metadata, logged_by, logged_at)
+               VALUES (?, 'crew_dispatched', ?, '{}', 'admin', ?)""",
+            (complaint_id, official_reply or "Crew dispatched to zone", now),
+        )
+    else:
+        conn.execute(
+            "UPDATE complaints SET status=?, official_reply=?, stage='reported' WHERE id=?",
+            (status, official_reply, complaint_id),
+        )
     conn.commit()
     conn.close()
 
