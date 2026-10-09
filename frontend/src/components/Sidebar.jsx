@@ -6,17 +6,17 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../AuthContext'
 
 const CITIZEN_LINKS = [
-  { to: '/citizen',         label: '🏘️ Home',          exact: true },
+  { to: '/citizen', label: '🏘️ Home', exact: true },
   { to: '/citizen/notices', label: '📋 Notices' },
-  { to: '/citizen/report',  label: '📢 Report Issue' },
-  { to: '/hardware',        label: '📡 Hardware Live' },
+  { to: '/citizen/report', label: '📢 Report Issue' },
+  { to: '/hardware', label: '📡 Hardware Live' },
 ]
 
 const OFFICIAL_LINKS = [
-  { to: '/official',          label: '🛠️ Official Home', exact: true },
+  { to: '/official', label: '🛠️ Official Home', exact: true },
   { to: '/official/controls', label: '🎛️ Demo Controls' },
-  { to: '/official/actions',  label: '🚨 Action Centre' },
-  { to: '/hardware',          label: '📡 Hardware Live' },
+  { to: '/official/actions', label: '🚨 Action Centre' },
+  { to: '/hardware', label: '📡 Hardware Live' },
 ]
 
 export default function Sidebar() {
@@ -61,11 +61,10 @@ export default function Sidebar() {
             <Link
               key={l.to}
               to={l.to}
-              className={`block px-3 py-2 rounded-lg text-sm transition-colors ${
-                active
+              className={`block px-3 py-2 rounded-lg text-sm transition-colors ${active
                   ? 'bg-primary/15 text-primary border border-primary/30'
                   : 'text-muted hover:text-text hover:bg-panel border border-transparent'
-              }`}
+                }`}
             >
               {l.label}
             </Link>

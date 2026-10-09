@@ -11,48 +11,8 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 // Point MapLibre at the local worker bundle
 setWorkerUrl(workerUrl)
 
-// Built-in dark theme style object: Loads immediately without watermark or API key
-const DARK_GRID_STYLE = {
-  version: 8,
-  name: 'Digital Twin Dark Base',
-  sources: {
-    'esri-dark-tiles': {
-      type: 'raster',
-      tiles: [
-        'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
-      ],
-      tileSize: 256,
-      attribution: '&copy; Esri &copy; OpenStreetMap',
-    },
-    'esri-labels': {
-      type: 'raster',
-      tiles: [
-        'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
-      ],
-      tileSize: 256,
-      attribution: '',
-    },
-  },
-  layers: [
-    {
-      id: 'background',
-      type: 'background',
-      paint: { 'background-color': '#0E1419' },
-    },
-    {
-      id: 'esri-dark-tiles-layer',
-      type: 'raster',
-      source: 'esri-dark-tiles',
-      paint: { 'raster-opacity': 0.85 },
-    },
-    {
-      id: 'esri-labels-layer',
-      type: 'raster',
-      source: 'esri-labels',
-      paint: { 'raster-opacity': 0.6 },
-    },
-  ],
-}
+const CARTO_KEY = 'cb1_4elk_1_2db6c44ef83f43499555ee41'
+const MAP_STYLE = `https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json?api_key=${CARTO_KEY}`
 
 function edgeColor(edge) {
   const c = edge.classification
@@ -93,7 +53,7 @@ export default function MapView({
 
     const m = new maplibregl.Map({
       container: mapContainer.current,
-      style: DARK_GRID_STYLE,
+      style: MAP_STYLE,
       center: center || [72.8347, 19.0596],   // Bandra West / Grid center
       zoom,
       pitch: 35,
@@ -114,28 +74,29 @@ export default function MapView({
         m.addSource('nodes', { type: 'geojson', data: emptyFC() })
       }
 
-      // glow layer for leaks/bursts
+      // Edge glow layer for anomalies
       if (!m.getLayer('edges-glow')) {
         m.addLayer({
           id: 'edges-glow',
           type: 'line',
           source: 'edges',
-          filter: ['in', ['get', 'classification'], ['literal', ['Theft', 'Burst', 'Leak']]],
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
           paint: {
             'line-color': ['get', 'color'],
-            'line-width': 18,
+            'line-width': ['*', ['get', 'width'], 2.5],
             'line-opacity': 0.35,
-            'line-blur': 8,
+            'line-blur': 3,
           },
         })
       }
 
-      // main edges
+      // Main pipe segments
       if (!m.getLayer('edges-main')) {
         m.addLayer({
           id: 'edges-main',
           type: 'line',
           source: 'edges',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
           paint: {
             'line-color': ['get', 'color'],
             'line-width': ['get', 'width'],
@@ -144,27 +105,64 @@ export default function MapView({
         })
       }
 
-      // nodes
-      if (!m.getLayer('nodes')) {
+      // Junction glow
+      if (!m.getLayer('nodes-glow')) {
         m.addLayer({
-          id: 'nodes',
+          id: 'nodes-glow',
           type: 'circle',
           source: 'nodes',
           paint: {
-            'circle-radius': 3.5,
+            'circle-radius': 8,
             'circle-color': '#5CC8D6',
-            'circle-opacity': 0.85,
-            'circle-stroke-width': 1,
+            'circle-opacity': 0.25,
+            'circle-blur': 1,
+          },
+        })
+      }
+
+      // Junction points
+      if (!m.getLayer('nodes-main')) {
+        m.addLayer({
+          id: 'nodes-main',
+          type: 'circle',
+          source: 'nodes',
+          paint: {
+            'circle-radius': 4,
+            'circle-color': '#5CC8D6',
+            'circle-stroke-width': 1.5,
             'circle-stroke-color': '#0E1419',
           },
         })
       }
 
-      // hover popup
+      // Junction labels
+      if (!m.getLayer('nodes-labels')) {
+        m.addLayer({
+          id: 'nodes-labels',
+          type: 'symbol',
+          source: 'nodes',
+          layout: {
+            'text-field': ['get', 'street'],
+            'text-size': 11,
+            'text-offset': [0, 1.2],
+            'text-anchor': 'top',
+            'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+            'text-max-width': 10,
+          },
+          paint: {
+            'text-color': '#E8EEF5',
+            'text-halo-color': '#0E1419',
+            'text-halo-width': 1.5,
+          },
+        })
+      }
+
+      // Tooltips & hover popups
       const popup = new maplibregl.Popup({
         closeButton: false,
         closeOnClick: false,
-        offset: 8,
+        offset: 12,
+        className: 'map-tooltip',
       })
 
       m.on('mouseenter', 'edges-main', (e) => {
@@ -178,7 +176,7 @@ export default function MapView({
             `<div style="font-family:Inter,sans-serif;">
                <div style="color:#FFB454; font-size:11px; text-transform:uppercase; letter-spacing:0.08em;">${p.street || 'Segment'}</div>
                <div style="margin-top:4px; color:#E8EEF5; font-weight:600;">${p.classification}</div>
-               <div style="color:#9AA7B6; font-size:11px;">confidence ${(Number(p.confidence) * 100).toFixed(0)}% · Δ ${Number(p.diff_pct).toFixed(1)}%</div>
+               <div style="color:#9AA7B6; font-size:11px;">confidence ${(Number(p.confidence || 0) * 100).toFixed(0)}% · Δ ${Number(p.diff_pct || 0).toFixed(1)}%</div>
              </div>`
           )
           .addTo(m)

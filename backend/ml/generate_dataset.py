@@ -27,63 +27,70 @@ def simulate_scenario(event_type):
         for _ in range(random.randint(4, 15)):
             noise = random.uniform(-2, 2)
             history.append(max(0.0, noise))
-        duration = 0
 
     elif event_type == "leak":
-        severity = random.uniform(0.10, 0.35)
-        growth = random.uniform(0.005, 0.03)
+        # Gradual onset: starts small and develops slowly over multiple ticks
+        start_sev = random.uniform(0.04, 0.12)
+        growth = random.uniform(0.01, 0.03)
         onset_at = random.randint(1, 3)
-        for t in range(random.randint(5, 20)):
+        for t in range(random.randint(6, 20)):
             if t < onset_at:
                 history.append(random.uniform(0, 2))
             else:
-                sev = min(severity + growth * (t - onset_at), 0.5)
+                sev = min(start_sev + growth * (t - onset_at), 0.45)
                 history.append(sev * 100 + random.uniform(-1, 1))
-        duration = len([d for d in history if d > 8])
 
     elif event_type == "theft":
-        severity = random.uniform(0.20, 0.50)
+        # Sudden onset: jumps immediately to moderate/high loss (15% - 55%)
+        severity = random.uniform(0.18, 0.55)
         for t in range(random.randint(4, 12)):
             if t < 1:
                 history.append(random.uniform(0, 2))
             else:
                 history.append(severity * 100 + random.uniform(-2, 2))
-        duration = len([d for d in history if d > 8])
 
     elif event_type == "burst":
-        severity = random.uniform(0.65, 0.98)
+        # Massive sudden onset: jumps immediately to > 60% loss
+        severity = random.uniform(0.60, 0.99)
         for t in range(random.randint(3, 8)):
             if t < 1:
                 history.append(random.uniform(0, 2))
             else:
                 history.append(severity * 100 + random.uniform(-3, 3))
-        duration = len([d for d in history if d > 8])
 
-    diff_pct = history[-1]
-    diff_pct_lag1 = history[-2] if len(history) >= 2 else diff_pct
-    diff_pct_lag3 = history[-4] if len(history) >= 4 else diff_pct_lag1
-    slope = (diff_pct - diff_pct_lag3) / 3.0
-    flow_in_norm = base_flow / 100.0
-
+    # Sample features at MULTIPLE points in the history, not just the last tick.
+    # This ensures the model learns both transition ticks (high slope) and steady-state ticks.
+    rows = []
     label = {"normal": "Normal", "leak": "Leak",
              "theft": "Theft", "burst": "Burst"}[event_type]
 
-    return {
-        "diff_pct": round(diff_pct, 2),
-        "diff_pct_lag1": round(diff_pct_lag1, 2),
-        "diff_pct_lag3": round(diff_pct_lag3, 2),
-        "slope": round(slope, 3),
-        "duration_steps": duration,
-        "flow_in_norm": round(flow_in_norm, 3),
-        "label": label,
-    }
+    for end in range(3, len(history) + 1):
+        window = history[:end]
+        diff_pct = window[-1]
+        diff_pct_lag1 = window[-2] if len(window) >= 2 else diff_pct
+        diff_pct_lag3 = window[-4] if len(window) >= 4 else diff_pct_lag1
+        slope = (diff_pct - diff_pct_lag3) / 3.0
+        duration_steps = len([d for d in window if d > 8])
+        flow_in_norm = base_flow / 100.0
+
+        rows.append({
+            "diff_pct": round(diff_pct, 2),
+            "diff_pct_lag1": round(diff_pct_lag1, 2),
+            "diff_pct_lag3": round(diff_pct_lag3, 2),
+            "slope": round(slope, 3),
+            "duration_steps": duration_steps,
+            "flow_in_norm": round(flow_in_norm, 3),
+            "label": label,
+        })
+
+    return rows
 
 
 def main():
     rows = []
     for event_type in ["normal", "leak", "theft", "burst"]:
         for _ in range(N_PER_CLASS):
-            rows.append(simulate_scenario(event_type))
+            rows.extend(simulate_scenario(event_type))
 
     random.shuffle(rows)
 

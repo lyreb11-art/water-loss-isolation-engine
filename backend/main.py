@@ -48,9 +48,9 @@ _ML_PATH = os.path.join(os.path.dirname(__file__), "ml", "model.joblib")
 _ML_BUNDLE = None
 
 
-def _get_ml_model():
+def _get_ml_model(reload: bool = False):
     global _ML_BUNDLE
-    if _ML_BUNDLE is None and os.path.exists(_ML_PATH):
+    if (_ML_BUNDLE is None or reload) and os.path.exists(_ML_PATH):
         _ML_BUNDLE = joblib.load(_ML_PATH)
         print(f"[OK] ML model loaded from {_ML_PATH}")
     return _ML_BUNDLE
@@ -424,7 +424,9 @@ async def api_ml_predict(req: MLPredictRequest):
     if bundle is None:
         raise HTTPException(status_code=503, detail="ML model not loaded. Run train_model.py first.")
     features = bundle["features"]
-    X = [[getattr(req, f) for f in features]]
+    data = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    data["duration_steps"] = min(30, max(0, data.get("duration_steps", 0)))
+    X = [[data[f] for f in features]]
     model = bundle["model"]
     pred = model.predict(X)[0]
     proba = float(model.predict_proba(X)[0].max())
