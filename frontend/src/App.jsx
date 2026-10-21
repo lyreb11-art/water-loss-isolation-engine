@@ -34,6 +34,7 @@ function AppRoutes() {
 
       {/* Public */}
       <Route path="/hardware" element={<HardwareLive />} />
+      <Route path="/hardware-live" element={<HardwareLive />} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

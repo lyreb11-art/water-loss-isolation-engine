@@ -109,6 +109,72 @@ async def _sim_loop():
             print(f"[WARN] sim loop tick failed: {e}")
 
 
+def _classify_flow_mismatch(flow_in: float, flow_out: float, valve_closed: bool = False):
+    """Thresholds aligned with ESP32 firmware: Normal<15%, Leak 15-30%, Theft 30-50%, Burst>50%"""
+    if valve_closed:
+        return 0.0, "Isolated", 1.0
+
+    if flow_in <= 0.05 and flow_out <= 0.05:
+        return 0.0, "Normal", 0.99
+
+    if flow_in <= 0:
+        return 0.0, "Normal", 0.99
+
+    diff_pct = max(0.0, ((flow_in - flow_out) / flow_in) * 100.0)
+
+    if diff_pct < 15.0:
+        classification = "Normal"
+        confidence = 0.98 - (diff_pct * 0.005)
+    elif diff_pct < 30.0:
+        classification = "Leak"
+        confidence = 0.88 + (diff_pct * 0.003)
+    elif diff_pct < 50.0:
+        classification = "Theft"
+        confidence = 0.93
+    else:
+        classification = "Burst"
+        confidence = 0.96
+
+    return round(diff_pct, 2), classification, round(min(0.99, confidence), 2)
+
+
+def _start_mqtt_worker():
+    import json
+    import paho.mqtt.client as mqtt
+
+    def on_connect(client, userdata, flags, rc, properties=None):
+        if rc == 0:
+            print("[MQTT BACKEND] Connected to HiveMQ broker successfully.")
+            client.subscribe("waterloss/hardware/sensor")
+
+    def on_message(client, userdata, msg):
+        try:
+            payload_str = msg.payload.decode("utf-8")
+            data = json.loads(payload_str)
+            flow_in = float(data.get("flow_in", 0))
+            flow_out = float(data.get("flow_out", 0))
+            valve_closed = bool(data.get("valve_closed", False))
+            diff_pct, classification, confidence = _classify_flow_mismatch(flow_in, flow_out, valve_closed)
+            db.add_live_reading(flow_in, flow_out, diff_pct, classification, confidence, valve_closed)
+            if flow_in > 0.05 or flow_out > 0.05:
+                print(f"[FLOW TELEMETRY] In: {flow_in:.1f} L/m | Out: {flow_out:.1f} L/m | Diff: {diff_pct:.1f}% | {classification}")
+        except Exception as e:
+            pass
+
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    client.on_connect = on_connect
+    client.on_message = on_message
+
+    try:
+        client.connect("broker.hivemq.com", 1883, 60)
+        client.loop_start()
+        print("[MQTT BACKEND] Background MQTT listener active on topic 'waterloss/hardware/sensor'")
+        return client
+    except Exception as e:
+        print(f"[MQTT BACKEND WARN] Could not start MQTT listener: {e}")
+        return None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
@@ -116,10 +182,14 @@ async def lifespan(app: FastAPI):
     _get_ml_model()
     task = asyncio.create_task(_sim_loop())
     print(f"[OK] Simulation loop started (interval {TICK_INTERVAL_SECONDS}s)")
+    mqtt_worker = _start_mqtt_worker()
     try:
         yield
     finally:
         task.cancel()
+        if mqtt_worker:
+            mqtt_worker.loop_stop()
+            mqtt_worker.disconnect()
         try:
             await task
         except asyncio.CancelledError:
@@ -785,9 +855,13 @@ def api_complaint_impact(cid: int):
 
 
 @app.get("/api/live")
-def api_live(limit: int = 40):
+def api_live(limit: int = 50):
     rows = db.latest_live_readings(limit=limit)
-    return {"readings": [dict(r) for r in rows]}
+    active_row = db.latest_active_live_reading()
+    return {
+        "readings": [dict(r) for r in rows],
+        "latest_active": dict(active_row) if active_row else None,
+    }
 
 
 class LiveReadingRequest(BaseModel):
@@ -799,8 +873,46 @@ class LiveReadingRequest(BaseModel):
     valve_closed: bool = False
 
 
+def _publish_mqtt_async(topic: str, message: str):
+    import threading
+    def _worker():
+        try:
+            import paho.mqtt.client as mqtt
+            c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+            c.connect("broker.hivemq.com", 1883, 5)
+            c.loop_start()
+            c.publish(topic, message, qos=1)
+            import time
+            time.sleep(0.3)
+            c.loop_stop()
+            c.disconnect()
+            print(f"[MQTT ASYNC] Published '{message}' to {topic}")
+        except Exception as e:
+            print(f"[MQTT ASYNC WARN] Could not publish to {topic}: {e}")
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 @app.post("/api/live")
 def api_add_live(req: LiveReadingRequest):
+    # Auto-isolation: if anomaly reaches Theft/Critical (>=30% loss), trip the pump relay!
+    # 30% loss = outlet < 70% of inlet, matching firmware CRITICAL_RATIO_THRESHOLD
+    valve_closed = req.valve_closed
+    if not valve_closed and req.diff_pct >= 30.0 and (req.flow_in > 0.05 or req.flow_out > 0.05):
+        valve_closed = True
+        _publish_mqtt_async("waterloss/hardware/valve", "CLOSE")
+        print(f"[AUTO-ISOLATION] Mismatch {req.diff_pct:.1f}% >= 30% -> Tripped pump relay via MQTT")
+
     db.add_live_reading(req.flow_in, req.flow_out, req.diff_pct,
-                        req.classification, req.confidence, req.valve_closed)
-    return {"ok": True}
+                        req.classification, req.confidence, valve_closed)
+    return {"ok": True, "valve_closed": valve_closed}
+
+
+class ValveControlRequest(BaseModel):
+    closed: bool
+
+
+@app.post("/api/valve")
+def api_valve_control(req: ValveControlRequest):
+    command = "CLOSE" if req.closed else "RESET"
+    _publish_mqtt_async("waterloss/hardware/valve", command)
+    return {"ok": True, "command": command}

@@ -1,0 +1,547 @@
+/*
+ * ESP32 Water Loss Isolation Engine - Dual Flow Sensor Firmware
+ * =============================================================
+ * Hardware Connections:
+ *   - Flow Sensor 1 (Inlet):  Signal (Yellow) -> GPIO 18 (D18)
+ *   - Flow Sensor 2 (Outlet): Signal (Yellow) -> GPIO 19 (D19)
+ *   - Relay Module:           IN -> GPIO 23 (D23)
+ *                             VCC -> ESP32 VIN (5V), GND -> ESP32 GND
+ *   - Buzzer:                 +  -> GPIO 5  (D5), - -> GND
+ *   - Green LED:              +  -> GPIO 21 (D21) (via 220-330 ohm resistor)
+ *   - Red LED:                +  -> GPIO 22 (D22) (via 220-330 ohm resistor)
+ *   - Sensor VCC (red)        -> 5V / VIN rail
+ *   - All grounds             -> common GND (must include ESP32 GND)
+ *
+ * Pump / Solenoid Power (separate buck supply, NOT through ESP32):
+ *   Buck OUT+  -> toggle switch -> relay COM
+ *   Relay NC   -> pump (+) and solenoid (+)   (normally-closed solenoid)
+ *   Buck OUT-  -> pump (-) and solenoid (-)   (direct, GND rail)
+ *   Relay idle   : COM-NC closed -> pump runs
+ *   Relay tripped: COM-NC open   -> pump + solenoid lose power
+ *
+ * Detection Thresholds (outlet/inlet ratio):
+ *   Normal : outlet >= 98% of inlet (< 2% loss)    -> GREEN LED
+ *   Leak   : outlet 90-98% of inlet (2-10% loss)   -> RED LED, buzzer OFF
+ *   Theft  : outlet < 90% of inlet (> 10% loss)    -> RED LED + Buzzer + Relay TRIP
+ *
+ * Safety: Shutdown is LATCHED. No auto-recovery. Requires MQTT "RESET"
+ *         command or physical ESP32 reset to restore pump power.
+ */
+
+#include <WiFi.h>
+#include <PubSubClient.h>
+
+// ==========================================
+// 1. WiFi & MQTT CONFIGURATION
+// ==========================================
+const char* WIFI_SSID     = "AK";
+const char* WIFI_PASSWORD = "12345678";
+
+const char* MQTT_BROKER   = "broker.hivemq.com";
+const int   MQTT_PORT     = 1883;
+
+// Topics (preserved for frontend compatibility)
+const char* TOPIC_SENSOR  = "waterloss/hardware/sensor";
+const char* TOPIC_VALVE   = "waterloss/hardware/valve";
+
+// ==========================================
+// 2. PIN DEFINITIONS & POLARITY
+// ==========================================
+const int PIN_FLOW_INLET  = 18;  // Flow Sensor 1 Signal (D18)
+const int PIN_FLOW_OUTLET = 19;  // Flow Sensor 2 Signal (D19)
+const int PIN_RELAY       = 23;  // Relay IN (D23)
+const int PIN_BUZZER      = 5;   // Buzzer + (D5)
+const int PIN_LED_GREEN   = 21;  // Green LED + (D21)
+const int PIN_LED_RED     = 22;  // Red LED + (D22)
+
+// CHANGED: single flag for relay polarity.
+//   false -> module energizes on HIGH (HIGH = pump cut)
+//   true  -> module energizes on LOW  (LOW  = pump cut)  [most blue 1-ch modules]
+// How to choose: with the pump wired through COM/NC, run the test sketch.
+// If the pump stops when the pin is LOW instead of HIGH, set this to true.
+const bool RELAY_ACTIVE_LOW = false;
+
+const int RELAY_CUT_POWER = RELAY_ACTIVE_LOW ? LOW  : HIGH;  // energize relay, NC opens, pump STOPS
+const int RELAY_NORMAL    = RELAY_ACTIVE_LOW ? HIGH : LOW;   // relay idle, NC closed, pump runs
+
+// CHANGED: buzzer polarity flag. false = sounds on HIGH (normal active buzzer).
+// Set true only if you use a low-level-trigger buzzer module.
+const bool BUZZER_ACTIVE_LOW = false;
+const int BUZZER_ON  = BUZZER_ACTIVE_LOW ? LOW  : HIGH;
+const int BUZZER_OFF = BUZZER_ACTIVE_LOW ? HIGH : LOW;
+
+// ==========================================
+// 3. CALIBRATION & DETECTION THRESHOLDS
+// ==========================================
+// YF-S201 calibration constants (pulses per second per L/min, CHANGE-edge counting).
+// Re-derive each with a measured bucket test: constant = pulses_counted / litres...
+// see notes: both sensors of the same model should end up close to each other.
+const float CALIBRATION_INLET  = 10.0;
+const float CALIBRATION_OUTLET = 18.5;
+
+const float NORMAL_RATIO = 0.98;   // above this = Normal (< 2% loss)
+const float THEFT_RATIO  = 0.90;   // below this = Theft  (> 10% loss) -> isolate
+// Between 0.90 and 0.98 = Leak (2-10% loss)
+
+// Minimum flow to consider pump active (filters noise at zero flow)
+const float MIN_ACTIVE_FLOW = 0.8;  // L/min
+
+// Startup: require this many consecutive stable readings before entering Normal
+const int STARTUP_STABLE_COUNT = 5;
+
+// ==========================================
+// 4. RUNTIME STATE
+// ==========================================
+volatile unsigned long pulseCountInlet  = 0;
+volatile unsigned long pulseCountOutlet = 0;
+
+// EMA (Exponential Moving Average) filter for stable readings
+const float EMA_ALPHA = 0.4;  // lower = smoother, higher = more responsive
+float emaFlowIn  = 0.0;
+float emaFlowOut = 0.0;
+bool  emaInitialized = false;
+
+unsigned long previousMillis = 0;
+const unsigned long SAMPLE_INTERVAL_MS = 1000;  // 1 second sampling
+
+// State machine:
+//   STARTUP  -> waiting for stable readings  (all LEDs OFF)
+//   IDLE     -> pump is off / no flow         (all LEDs OFF)
+//   NORMAL   -> outlet >= 98% of inlet        (GREEN LED ON)
+//   LEAK     -> outlet 90-98% of inlet        (RED LED ON, buzzer OFF)
+//   ISOLATED -> outlet < 90% of inlet LATCHED (RED LED + Buzzer + Relay)
+enum SystemState {
+  STATE_STARTUP,
+  STATE_IDLE,
+  STATE_NORMAL,
+  STATE_LEAK,
+  STATE_ISOLATED
+};
+
+SystemState currentState = STATE_STARTUP;
+int startupStableCount = 0;
+
+// Latched isolation: once tripped, stays tripped until MQTT RESET or ESP32 reset
+bool isolationLatched = false;
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+// ==========================================
+// 5. INTERRUPT SERVICE ROUTINES
+// ==========================================
+void IRAM_ATTR pulseCounterInlet() {
+  pulseCountInlet++;
+}
+
+void IRAM_ATTR pulseCounterOutlet() {
+  pulseCountOutlet++;
+}
+
+// ==========================================
+// 6. BUZZER CONTROL (active buzzer)
+// ==========================================
+void soundAlarm(bool enable) {
+  digitalWrite(PIN_BUZZER, enable ? BUZZER_ON : BUZZER_OFF);   // CHANGED: uses polarity flag
+}
+
+// ==========================================
+// 7. LED HELPERS
+// ==========================================
+void setLEDs(bool green, bool red) {
+  digitalWrite(PIN_LED_GREEN, green ? HIGH : LOW);
+  digitalWrite(PIN_LED_RED, red ? HIGH : LOW);
+}
+
+// ==========================================
+// 8. STATE TRANSITION WITH INDICATORS
+// ==========================================
+void enterState(SystemState newState) {
+  if (newState == currentState) return;
+
+  currentState = newState;
+  switch (newState) {
+
+    case STATE_STARTUP:
+      setLEDs(false, false);
+      soundAlarm(false);
+      if (!isolationLatched) digitalWrite(PIN_RELAY, RELAY_NORMAL);
+      Serial.println("[STATE] -> STARTUP (all LEDs OFF)");
+      break;
+
+    case STATE_IDLE:
+      setLEDs(false, false);
+      soundAlarm(false);
+      if (!isolationLatched) digitalWrite(PIN_RELAY, RELAY_NORMAL);
+      Serial.println("[STATE] -> IDLE (pump off, all LEDs OFF)");
+      break;
+
+    case STATE_NORMAL:
+      setLEDs(true, false);    // GREEN ON, RED OFF
+      soundAlarm(false);
+      if (!isolationLatched) digitalWrite(PIN_RELAY, RELAY_NORMAL);
+      startupStableCount = 0;
+      Serial.println("[STATE] -> NORMAL (Green LED ON, diff < 2%)");
+      break;
+
+    case STATE_LEAK:
+      setLEDs(false, true);    // RED ON, GREEN OFF
+      soundAlarm(false);       // Buzzer OFF for leak
+      if (!isolationLatched) digitalWrite(PIN_RELAY, RELAY_NORMAL); // pump still running
+      Serial.println("[STATE] -> LEAK (Red LED ON, buzzer OFF, diff 2-10%)");
+      break;
+
+    case STATE_ISOLATED:
+      setLEDs(false, true);    // RED ON, GREEN OFF
+      soundAlarm(true);        // BUZZER ON
+      isolationLatched = true;
+      digitalWrite(PIN_RELAY, RELAY_CUT_POWER); // TRIP RELAY -> CUT PUMP
+      Serial.println("\n****************************************************");
+      Serial.println(">>> [THEFT] PUMP CUT! Outlet < 90% of inlet (>10% loss).");
+      Serial.println(">>> RED LED ON + Buzzer ON + Relay TRIPPED.");
+      Serial.println(">>> Send MQTT 'RESET' to restore pump power.");
+      Serial.println("****************************************************\n");
+      break;
+  }
+}
+
+// ==========================================
+// 9. MQTT CALLBACK (REMOTE COMMANDS)
+// ==========================================
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  String message = "";
+  for (unsigned int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+  Serial.print("[MQTT RECEIVED] Topic: ");
+  Serial.print(topic);
+  Serial.print(" | Message: ");
+  Serial.println(message);
+
+  if (String(topic) == TOPIC_VALVE) {
+    // CLOSE command: force isolation
+    if (message.indexOf("CLOSE") >= 0 || message.indexOf("SHUT") >= 0) {
+      enterState(STATE_ISOLATED);
+      Serial.println(">>> [MQTT] Remote CLOSE command -> Pump ISOLATED.");
+    }
+    // RESET command: the ONLY way to unlatch isolation
+    else if (message.indexOf("RESET") >= 0) {
+      isolationLatched = false;
+      startupStableCount = 0;
+      digitalWrite(PIN_RELAY, RELAY_NORMAL);
+      soundAlarm(false);
+      enterState(STATE_STARTUP);
+      Serial.println(">>> [MQTT] RESET command -> Isolation cleared, restarting validation.");
+    }
+    // OPEN alone won't unlatch (safety measure)
+    else if (message.indexOf("OPEN") >= 0 || message.indexOf("false") >= 0) {
+      if (!isolationLatched) {
+        enterState(STATE_NORMAL);
+        Serial.println(">>> [MQTT] OPEN command -> Normal (not latched).");
+      } else {
+        Serial.println(">>> [MQTT] OPEN ignored - isolation is LATCHED. Send 'RESET' to clear.");
+      }
+    }
+  }
+}
+
+// ==========================================
+// 10. SETUP
+// ==========================================
+void connectWiFi();  // forward declaration
+
+void setup() {
+  // CHANGED: set output levels BEFORE pinMode to avoid a glitch on the relay/buzzer
+  digitalWrite(PIN_RELAY, RELAY_NORMAL);
+  digitalWrite(PIN_BUZZER, BUZZER_OFF);
+  digitalWrite(PIN_LED_GREEN, LOW);
+  digitalWrite(PIN_LED_RED, LOW);
+
+  pinMode(PIN_RELAY, OUTPUT);
+  pinMode(PIN_BUZZER, OUTPUT);
+  pinMode(PIN_LED_GREEN, OUTPUT);
+  pinMode(PIN_LED_RED, OUTPUT);
+
+  // Re-assert safe state after pins become outputs
+  digitalWrite(PIN_RELAY, RELAY_NORMAL);   // pump runs
+  digitalWrite(PIN_BUZZER, BUZZER_OFF);    // buzzer silent
+  digitalWrite(PIN_LED_GREEN, LOW);
+  digitalWrite(PIN_LED_RED, LOW);
+
+  Serial.begin(115200);
+  delay(300);
+  Serial.println("\n==============================================");
+  Serial.println("   Water Loss Isolation Engine - ESP32 Boot   ");
+  Serial.println("==============================================");
+  Serial.print("[BOOT] Relay active-low: ");
+  Serial.println(RELAY_ACTIVE_LOW ? "YES" : "NO");
+  Serial.println("[BOOT] All LEDs OFF, Buzzer OFF, Relay NORMAL (pump powered).");
+
+  // Sensor inputs with internal pullup
+  pinMode(PIN_FLOW_INLET, INPUT_PULLUP);
+  pinMode(PIN_FLOW_OUTLET, INPUT_PULLUP);
+
+  // Interrupts on CHANGE edge (consistent with calibration)
+  attachInterrupt(digitalPinToInterrupt(PIN_FLOW_INLET), pulseCounterInlet, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(PIN_FLOW_OUTLET), pulseCounterOutlet, CHANGE);
+
+  // MQTT
+  client.setServer(MQTT_BROKER, MQTT_PORT);
+  client.setCallback(mqttCallback);
+  client.setBufferSize(512);
+  client.setKeepAlive(15);
+
+  // WiFi
+  connectWiFi();
+
+  currentState = STATE_STARTUP;
+  Serial.println("[READY] Entering startup validation phase...");
+  Serial.print("[CONFIG] Calibration: Inlet=");
+  Serial.print(CALIBRATION_INLET);
+  Serial.print(" Outlet=");
+  Serial.println(CALIBRATION_OUTLET);
+  Serial.print("[CONFIG] Normal: >=");
+  Serial.print(NORMAL_RATIO * 100, 0);
+  Serial.print("% | Leak: 90-98% | Theft: <");
+  Serial.print(THEFT_RATIO * 100, 0);
+  Serial.println("%");
+}
+
+void connectWiFi() {
+  Serial.print("\n[WIFI] Connecting to: ");
+  Serial.println(WIFI_SSID);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 15) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n[WIFI] Connected!");
+    Serial.print("[WIFI] IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\n[WIFI WARN] Not connected. Local detection still active.");
+  }
+}
+
+void checkMQTT() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  if (!client.connected()) {
+    static unsigned long lastMqttAttempt = 0;
+    unsigned long now = millis();
+    if (now - lastMqttAttempt >= 6000) {
+      lastMqttAttempt = now;
+      String clientId = "ESP32_WL_" + String(random(0xffff), HEX);
+      Serial.print("[MQTT] Connecting... ");
+      if (client.connect(clientId.c_str())) {
+        Serial.println("CONNECTED!");
+        client.subscribe(TOPIC_VALVE);
+        Serial.print("[MQTT] Subscribed: ");
+        Serial.println(TOPIC_VALVE);
+      } else {
+        Serial.print("FAILED (rc=");
+        Serial.print(client.state());
+        Serial.println("). Retry in 6s.");
+      }
+    }
+  } else {
+    client.loop();
+  }
+}
+
+void checkWiFi() {
+  if (WiFi.status() != WL_CONNECTED) {
+    static unsigned long lastWifiAttempt = 0;
+    unsigned long now = millis();
+    if (now - lastWifiAttempt >= 12000) {
+      lastWifiAttempt = now;
+      Serial.println("[WIFI] Reconnecting...");
+      WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    }
+  }
+}
+
+// ==========================================
+// 11. MAIN LOOP
+// ==========================================
+void loop() {
+  checkWiFi();
+  checkMQTT();
+
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis < SAMPLE_INTERVAL_MS) return;
+
+  unsigned long elapsedTime = currentMillis - previousMillis;
+  previousMillis = currentMillis;
+
+  // ---- Grab pulse counts atomically ----
+  noInterrupts();
+  unsigned long pulses1 = pulseCountInlet;
+  unsigned long pulses2 = pulseCountOutlet;
+  pulseCountInlet  = 0;
+  pulseCountOutlet = 0;
+  interrupts();
+
+  // ---- Calculate raw flow rates (L/min) ----
+  float elapsedSec  = (float)elapsedTime / 1000.0;
+  float rawFlowIn   = ((float)pulses1 / elapsedSec) / CALIBRATION_INLET;
+  float rawFlowOut  = ((float)pulses2 / elapsedSec) / CALIBRATION_OUTLET;
+
+  // ---- EMA filter ----
+  if (!emaInitialized) {
+    emaFlowIn  = rawFlowIn;
+    emaFlowOut = rawFlowOut;
+    emaInitialized = true;
+  } else {
+    emaFlowIn  = EMA_ALPHA * rawFlowIn  + (1.0 - EMA_ALPHA) * emaFlowIn;
+    emaFlowOut = EMA_ALPHA * rawFlowOut + (1.0 - EMA_ALPHA) * emaFlowOut;
+  }
+
+  float flowIn  = emaFlowIn;
+  float flowOut = emaFlowOut;
+
+  // ---- Outlet ratio and diff % ----
+  float outletRatio = 1.0;
+  float diffPct     = 0.0;
+  if (flowIn > 0.1) {
+    outletRatio = flowOut / flowIn;
+    diffPct     = (1.0 - outletRatio) * 100.0;
+    if (diffPct < 0.0) diffPct = 0.0;  // outlet > inlet = no loss
+  }
+
+  bool flowActive = (flowIn > MIN_ACTIVE_FLOW || flowOut > MIN_ACTIVE_FLOW);
+  String status   = "startup";
+
+  // ============================================================
+  // STATE MACHINE
+  // ============================================================
+  if (isolationLatched) {
+    // LATCHED: pump stays off, RED LED + buzzer stay on
+    setLEDs(false, true);
+    soundAlarm(true);
+    digitalWrite(PIN_RELAY, RELAY_CUT_POWER);
+    currentState = STATE_ISOLATED;
+    status = "isolated";
+
+  } else {
+    switch (currentState) {
+
+      case STATE_STARTUP:
+        if (flowActive) {
+          if (outletRatio >= NORMAL_RATIO) {
+            startupStableCount++;
+            Serial.print("[STARTUP] Stable #");
+            Serial.print(startupStableCount);
+            Serial.print("/");
+            Serial.println(STARTUP_STABLE_COUNT);
+            if (startupStableCount >= STARTUP_STABLE_COUNT) {
+              enterState(STATE_NORMAL);
+            }
+          } else {
+            startupStableCount = 0;
+          }
+        }
+        status = "startup";
+        break;
+
+      case STATE_IDLE:
+        if (flowActive) {
+          startupStableCount = 0;
+          enterState(STATE_STARTUP);
+        }
+        status = "idle";
+        break;
+
+      case STATE_NORMAL:
+        if (!flowActive) {
+          enterState(STATE_IDLE);
+          status = "idle";
+        } else if (outletRatio < THEFT_RATIO) {
+          Serial.print(">>> [THEFT] Outlet ratio: ");
+          Serial.print(outletRatio * 100.0, 1);
+          Serial.print("% (diff: ");
+          Serial.print(diffPct, 1);
+          Serial.println("%) ISOLATING PUMP!");
+          enterState(STATE_ISOLATED);
+          status = "isolated";
+        } else if (outletRatio < NORMAL_RATIO) {
+          Serial.print(">>> [LEAK] Outlet ratio: ");
+          Serial.print(outletRatio * 100.0, 1);
+          Serial.print("% (diff: ");
+          Serial.print(diffPct, 1);
+          Serial.println("%) Red LED ON, pump still running.");
+          enterState(STATE_LEAK);
+          status = "leak";
+        } else {
+          status = "normal";
+        }
+        break;
+
+      case STATE_LEAK:
+        if (!flowActive) {
+          enterState(STATE_IDLE);
+          status = "idle";
+        } else if (outletRatio < THEFT_RATIO) {
+          Serial.print(">>> [LEAK->THEFT] Outlet ratio: ");
+          Serial.print(outletRatio * 100.0, 1);
+          Serial.println("% ISOLATING PUMP!");
+          enterState(STATE_ISOLATED);
+          status = "isolated";
+        } else if (outletRatio >= NORMAL_RATIO) {
+          Serial.println(">>> [RECOVERED] Back to normal flow.");
+          enterState(STATE_NORMAL);
+          status = "normal";
+        } else {
+          status = "leak";
+        }
+        break;
+
+      case STATE_ISOLATED:
+        status = "isolated";
+        break;
+    }
+  }
+
+  // ---- Serial debug output ----
+  Serial.print("[FLOW] In: ");
+  Serial.print(flowIn, 2);
+  Serial.print(" L/m (");
+  Serial.print(pulses1);
+  Serial.print("p) | Out: ");
+  Serial.print(flowOut, 2);
+  Serial.print(" L/m (");
+  Serial.print(pulses2);
+  Serial.print("p) | Diff: ");
+  Serial.print(diffPct, 1);
+  Serial.print("% | Ratio: ");
+  Serial.print(outletRatio * 100.0, 1);
+  Serial.print("% | State: ");
+  Serial.println(status);
+
+  // ---- JSON payload for MQTT + Web Serial ----
+  String jsonPayload = "{";
+  jsonPayload += "\"flow_in\":"    + String(flowIn, 2)  + ",";
+  jsonPayload += "\"flow_out\":"   + String(flowOut, 2) + ",";
+  jsonPayload += "\"diff_pct\":"   + String(diffPct, 1) + ",";
+  jsonPayload += "\"outlet_ratio\":" + String(outletRatio * 100.0, 1) + ",";
+  jsonPayload += "\"valve_closed\":" + String(isolationLatched ? "true" : "false") + ",";
+  jsonPayload += "\"status\":\""    + status + "\"";
+  jsonPayload += "}";
+
+  Serial.print("[DATA] ");
+  Serial.println(jsonPayload);
+
+  if (client.connected()) {
+    if (client.publish(TOPIC_SENSOR, jsonPayload.c_str())) {
+      Serial.print("  -> [MQTT PUBLISHED] ");
+      Serial.println(jsonPayload);
+    }
+  }
+}

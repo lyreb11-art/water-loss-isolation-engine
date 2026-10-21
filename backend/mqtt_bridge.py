@@ -24,10 +24,21 @@ import argparse
 import json
 import random
 import sys
+import threading
 import time
 import requests
 import paho.mqtt.client as mqtt
 import db
+
+try:
+    import serial
+    import serial.tools.list_ports
+    HAS_SERIAL = True
+except ImportError:
+    HAS_SERIAL = False
+
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(line_buffering=True)
 
 # Default Configuration
 DEFAULT_BROKER = "broker.hivemq.com"
@@ -37,50 +48,65 @@ DEFAULT_VALVE_TOPIC = "waterloss/hardware/valve"
 BACKEND_URL = "http://localhost:8000/api/live"
 
 
-def classify_flow_mismatch(flow_in: float, flow_out: float, valve_closed: bool = False):
-    """Calculates diff_pct, classification, and confidence score."""
+def classify_flow_mismatch(flow_in: float, flow_out: float, valve_closed: bool = False,
+                           status: str = None):
+    """Classifies flow reading. Thresholds match ESP32 firmware exactly:
+      - Normal : diff <  2%  (outlet >= 98% of inlet)  -> GREEN LED
+      - Leak   : diff 2-10%  (outlet 90-98% of inlet)  -> RED LED, pump running
+      - Theft  : diff > 10%  (outlet <  90% of inlet)  -> RED LED + Buzzer + Relay TRIPS
+    """
+    # If firmware already classified it, trust that directly
+    if status == "isolated":
+        return 0.0, "Isolated", 1.0
+    if status == "leak":
+        diff_pct = max(0.0, ((flow_in - flow_out) / flow_in) * 100.0) if flow_in > 0 else 0.0
+        return round(diff_pct, 2), "Leak", 0.95
+    if status == "theft" or (valve_closed and status not in (None, "normal")):
+        diff_pct = max(0.0, ((flow_in - flow_out) / flow_in) * 100.0) if flow_in > 0 else 0.0
+        return round(diff_pct, 2), "Theft", 0.97
+
     if valve_closed:
         return 0.0, "Isolated", 1.0
+
+    if flow_in <= 0.05 and flow_out <= 0.05:
+        return 0.0, "Normal", 0.99
 
     if flow_in <= 0:
         return 0.0, "Normal", 0.99
 
+    # diff % = how much outlet is BELOW inlet
     diff_pct = max(0.0, ((flow_in - flow_out) / flow_in) * 100.0)
 
-    if diff_pct < 5.0:
+    if diff_pct < 2.0:
         classification = "Normal"
-        confidence = 0.98 - (diff_pct * 0.01)
-    elif diff_pct < 18.0:
+        confidence = 0.99
+    elif diff_pct < 10.0:
         classification = "Leak"
-        confidence = 0.85 + (diff_pct * 0.005)
-    elif diff_pct < 35.0:
-        classification = "Theft"
-        confidence = 0.88 + (diff_pct * 0.002)
+        confidence = 0.93
     else:
-        classification = "Burst"
-        confidence = 0.95
+        classification = "Theft"
+        confidence = 0.97
 
     return round(diff_pct, 2), classification, round(min(0.99, confidence), 2)
 
 
+_last_idle_time = 0.0
+
 def process_and_store_reading(flow_in: float, flow_out: float, valve_closed: bool = False):
     """Classifies flow reading and stores it in database & sends to backend API."""
+    global _last_idle_time
+    now = time.time()
+
+    # If completely idle (0.0, 0.0), record a heartbeat only once every 4 seconds
+    # When active flow is detected, record EVERY reading instantly!
+    is_idle = (flow_in <= 0.05 and flow_out <= 0.05 and not valve_closed)
+    if is_idle:
+        if now - _last_idle_time < 4.0:
+            return None
+        _last_idle_time = now
+
     diff_pct, classification, confidence = classify_flow_mismatch(flow_in, flow_out, valve_closed)
 
-    # 1. Store directly in DB
-    try:
-        db.add_live_reading(
-            flow_in=flow_in,
-            flow_out=flow_out,
-            diff_pct=diff_pct,
-            classification=classification,
-            confidence=confidence,
-            valve_closed=valve_closed,
-        )
-    except Exception as e:
-        print(f"[WARN] DB insert warning: {e}")
-
-    # 2. Post to backend REST API if running
     payload = {
         "flow_in": flow_in,
         "flow_out": flow_out,
@@ -89,12 +115,31 @@ def process_and_store_reading(flow_in: float, flow_out: float, valve_closed: boo
         "confidence": confidence,
         "valve_closed": valve_closed,
     }
+
+    # Post to backend REST API (main.py's /api/live will persist to DB, preventing duplicate rows)
+    posted = False
     try:
         res = requests.post(BACKEND_URL, json=payload, timeout=2)
         if res.status_code == 200:
-            print(f"[OK] Posted telemetry to backend: Flow In={flow_in}L/m | Out={flow_out}L/m | Diff={diff_pct}% | {classification}")
+            posted = True
+            print(f"[OK] Telemetry -> Flow IN: {flow_in:.1f} L/m | OUT: {flow_out:.1f} L/m | Diff: {diff_pct:.1f}% | {classification}")
     except Exception:
-        print(f"[INFO] DB saved locally. Backend API at {BACKEND_URL} not running.")
+        pass
+
+    # If backend API is not running, save directly to local SQLite database
+    if not posted:
+        try:
+            db.add_live_reading(
+                flow_in=flow_in,
+                flow_out=flow_out,
+                diff_pct=diff_pct,
+                classification=classification,
+                confidence=confidence,
+                valve_closed=valve_closed,
+            )
+            print(f"[LOCAL DB] Saved to DB -> Flow IN: {flow_in:.1f} L/m | OUT: {flow_out:.1f} L/m | Diff: {diff_pct:.1f}%")
+        except Exception as e:
+            print(f"[WARN] DB insert warning: {e}")
 
     return payload
 
@@ -125,12 +170,83 @@ def on_message(client, userdata, msg):
         print(f"[ERROR] Error processing MQTT message: {e}")
 
 
-def run_mqtt_listener(broker: str, port: int, topic: str):
+def run_serial_reader():
+    """Reads telemetry lines from ESP32 USB COM port directly."""
+    if not HAS_SERIAL:
+        print("[SERIAL] pyserial not available, USB direct mode disabled.")
+        return
+
+    print("[SERIAL] Starting USB Serial listener thread (auto-scanning for ESP32)...")
+    while True:
+        target_port = None
+        try:
+            ports = list(serial.tools.list_ports.comports())
+            for p in ports:
+                desc = (p.description or "").lower()
+                # Match Silicon Labs CP210x, CH340, USB-to-UART, or COM5
+                if "cp210" in desc or "ch340" in desc or "uart" in desc or p.device == "COM5":
+                    target_port = p.device
+                    break
+
+            if not target_port and ports:
+                for p in ports:
+                    if "bluetooth" not in (p.description or "").lower():
+                        target_port = p.device
+                        break
+
+            if not target_port:
+                time.sleep(3)
+                continue
+
+            with serial.Serial(target_port, 115200, timeout=1.5) as ser:
+                print(f"[SERIAL OK] Connected directly to ESP32 on {target_port} (115200 baud)!")
+                while True:
+                    raw = ser.readline()
+                    if not raw:
+                        continue
+                    line = raw.decode("utf-8", errors="ignore").strip()
+                    if not line:
+                        continue
+
+                    # Look for [DATA] {...} or standalone JSON
+                    data_str = None
+                    if "[DATA]" in line:
+                        data_str = line.split("[DATA]", 1)[1].strip()
+                    elif line.startswith("{") and "flow_in" in line:
+                        data_str = line
+
+                    if data_str:
+                        try:
+                            d = json.loads(data_str)
+                            flow_in = float(d.get("flow_in", 0))
+                            flow_out = float(d.get("flow_out", 0))
+                            valve_closed = bool(d.get("valve_closed", False))
+                            process_and_store_reading(flow_in, flow_out, valve_closed)
+                        except Exception:
+                            pass
+        except serial.SerialException:
+            # Port busy (e.g. Arduino Serial Monitor open) or disconnected
+            time.sleep(2)
+        except Exception as e:
+            time.sleep(2)
+
+
+def run_mqtt_listener(broker: str, port: int, topic: str, use_serial: bool = False):
     """Connects to MQTT Broker and listens for messages continuously."""
     db.init_db()
+
+    # Start background USB Serial auto-scanner ONLY if explicitly requested
+    if use_serial and HAS_SERIAL:
+        serial_thread = threading.Thread(target=run_serial_reader, daemon=True)
+        serial_thread.start()
+        print("[BRIDGE] USB Serial reader enabled (locks COM port).")
+    else:
+        print("[BRIDGE] Pure MQTT mode active. COM ports remain free for Arduino IDE!")
+
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, userdata={"topic": topic})
     client.on_connect = on_connect
     client.on_message = on_message
+
 
     print(f"[START] Connecting to MQTT Broker at {broker}:{port}...")
     try:
@@ -207,9 +323,11 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"MQTT broker port (default: {DEFAULT_PORT})")
     parser.add_argument("--topic", type=str, default=DEFAULT_SENSOR_TOPIC, help=f"MQTT topic (default: {DEFAULT_SENSOR_TOPIC})")
 
+    parser.add_argument("--serial", action="store_true", help="Also attach to USB COM port (warning: locks COM port from Arduino IDE)")
+
     args = parser.parse_args()
 
     if args.simulate:
         run_simulator(broker=args.broker, port=args.port, topic=args.topic)
     else:
-        run_mqtt_listener(broker=args.broker, port=args.port, topic=args.topic)
+        run_mqtt_listener(broker=args.broker, port=args.port, topic=args.topic, use_serial=args.serial)

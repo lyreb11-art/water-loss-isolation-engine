@@ -155,7 +155,29 @@ def update_complaint(complaint_id, status, official_reply=None):
     conn.close()
 
 
+_last_idle_insert = 0.0
+_last_was_active = False
+
+
 def add_live_reading(flow_in, flow_out, diff_pct, classification, confidence, valve_closed):
+    global _last_idle_insert, _last_was_active
+    import time
+    now = time.time()
+
+    is_active = (flow_in > 0.05 or flow_out > 0.05 or bool(valve_closed))
+
+    # Throttle repetitive idle zero readings so they don't bury active flow events
+    if not is_active:
+        if _last_was_active:
+            _last_was_active = False
+            _last_idle_insert = now
+        elif now - _last_idle_insert < 15.0:
+            return
+        else:
+            _last_idle_insert = now
+    else:
+        _last_was_active = True
+
     conn = get_conn()
     conn.execute(
         """INSERT INTO live_readings
@@ -174,6 +196,17 @@ def latest_live_readings(limit=50):
     ).fetchall()
     conn.close()
     return rows
+
+
+def latest_active_live_reading():
+    conn = get_conn()
+    row = conn.execute(
+        """SELECT * FROM live_readings 
+           WHERE flow_in > 0.05 OR flow_out > 0.05 
+           ORDER BY id DESC LIMIT 1"""
+    ).fetchone()
+    conn.close()
+    return row
 
 
 def add_synthetic_event(edge, zone, diff_pct, classification, confidence):

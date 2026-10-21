@@ -33,6 +33,7 @@ export function calculateFinancialLoss(diffPct, flowInLpm = 45.0) {
 
 /**
  * Generates AI Predictive Diagnostic Analysis & Repair Recommendation.
+ * Thresholds aligned with ESP32 firmware: Normal<15%, Leak 15-30%, Theft 30-50%, Burst>50%
  */
 export function generateAIDiagnosis(anomaly) {
   const diff = anomaly.diff_pct || 0
@@ -40,36 +41,36 @@ export function generateAIDiagnosis(anomaly) {
   const confidencePct = Math.round((anomaly.confidence || 0.9) * 100)
   const edge = anomaly.edge || anomaly.edge_id || 'Pipeline Segment'
 
-  if (type === 'Burst' || diff >= 35.0) {
+  if (type === 'Burst' || diff >= 50.0) {
     return {
       severity: 'CRITICAL',
       badgeClass: 'pill-burst',
       title: '🚨 Pipe Structural Rupture / Main Line Burst',
-      rootCause: `Sudden ${diff.toFixed(1)}% drop detected on ${edge}. Indicates catastrophic pipe wall fracture caused by pressure surge or structural fatigue.`,
-      dispatchAction: 'AUTOMATED ISOLATION: Trip primary solenoid valve #V-102. Dispatch Emergency Response Unit 1 with pipe sleeve replacement kit.',
+      rootCause: `Catastrophic ${diff.toFixed(1)}% flow loss on ${edge}. Outlet < 50% of inlet — indicates pipe wall fracture or complete diversion.`,
+      dispatchAction: 'AUTOMATED ISOLATION: Relay tripped, pump power severed. Supply cut immediately to prevent flooding.',
       priority: 'Immediate (0-15 mins)',
     }
   }
 
-  if (type === 'Theft' || diff >= 18.0) {
+  if (type === 'Theft' || diff >= 30.0) {
     return {
       severity: 'HIGH',
       badgeClass: 'pill-theft',
-      title: '🟠 Commercial Water Theft / Illegal Connection',
-      rootCause: `Unmetered ${diff.toFixed(1)}% flow deviation (${confidencePct}% confidence). Characteristic periodic consumption spike on ${edge}.`,
-      dispatchAction: 'INSPECTION NOTICE: Dispatch Field Enforcement Officers to inspect commercial tapping junction near node segment.',
-      priority: 'High (1-2 hours)',
+      title: '🟠 Water Theft / Critical Extraction Anomaly',
+      rootCause: `${diff.toFixed(1)}% flow deviation detected (${confidencePct}% confidence). Outlet < 70% of inlet — critical threshold exceeded.`,
+      dispatchAction: 'AUTOMATED ISOLATION: Relay tripped, pump power cut. Latched shutdown until manual RESET.',
+      priority: 'High (Immediate Isolation)',
     }
   }
 
-  if (type === 'Leak' || diff >= 5.0) {
+  if (type === 'Leak' || diff >= 15.0) {
     return {
       severity: 'MODERATE',
       badgeClass: 'pill-leak',
       title: '🟡 Subsurface Joint Corrosion / Pipe Leak',
-      rootCause: `Gradual ${diff.toFixed(1)}% residual mismatch on ${edge}. Pattern matches subsurface micro-crack or failing gasket joint.`,
-      dispatchAction: 'MAINTENANCE QUEUE: Schedule acoustic leak detection scan during low-demand night window (02:00 - 04:00 AM).',
-      priority: 'Medium (24 hours)',
+      rootCause: `${diff.toFixed(1)}% residual mismatch on ${edge}. Outlet 70-85% of inlet — pattern matches micro-crack or gasket failure.`,
+      dispatchAction: 'MONITORING: Red LED active, buzzer silent. If sustained 3+ seconds, escalates to critical isolation.',
+      priority: 'Medium (3s grace, then isolation)',
     }
   }
 
@@ -77,8 +78,8 @@ export function generateAIDiagnosis(anomaly) {
     severity: 'NOMINAL',
     badgeClass: 'pill-stable',
     title: '🟢 Normal Flow Operation',
-    rootCause: 'All flow sensors operating within nominal tolerance (< 5% residual variance).',
-    dispatchAction: 'No repair action required. Continue continuous telemetry logging.',
+    rootCause: 'All flow sensors within nominal tolerance (< 15% variance). Outlet ≥ 85% of inlet.',
+    dispatchAction: 'No action required. Continuous telemetry logging active.',
     priority: 'Routine',
   }
 }

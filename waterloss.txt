@@ -1,15 +1,15 @@
-cd "C:\Users\ADMIN\Downloads\water-loss-react (2)\water-loss-react\water-loss-react\frontend"
+cd "C:\Users\ADMIN\Downloads\water-loss-react (2)\frontend"
 
 npm run dev
 
 
 
-cd "C:\Users\ADMIN\Downloads\water-loss-react (2)\water-loss-react\water-loss-react\backend"
+cd "C:\Users\ADMIN\Downloads\water-loss-react (2)\backend"
 
  uvicorn main:app --reload --port 8000
 
 
 
-cd "C:\Users\ADMIN\Downloads\water-loss-react (2)\water-loss-react\water-loss-react\backend"
+cd "C:\Users\ADMIN\Downloads\water-loss-react (2)\backend"
 
 python mqtt_bridge.py

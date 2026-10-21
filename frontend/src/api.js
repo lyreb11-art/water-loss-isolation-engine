@@ -122,6 +122,11 @@ export async function addLiveReading(reading) {
   return data
 }
 
+export async function controlValve(closed) {
+  const { data } = await client.post('/api/valve', { closed })
+  return data
+}
+
 // ---- complaint tracking & lifecycle ----
 export async function fetchComplaint(id) {
   const { data } = await client.get(`/api/complaints/${id}`)
